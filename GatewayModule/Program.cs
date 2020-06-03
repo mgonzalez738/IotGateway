@@ -11,11 +11,25 @@ namespace GatewayModule
     using Microsoft.Azure.Devices.Client;
     using Microsoft.Azure.Devices.Client.Transport.Mqtt;
 
+    using System.Device.Gpio;
+    using Microsoft.Azure.Devices.Shared;
+    using Newtonsoft.Json;
+
     class Program
     {
         static int counter;
 
-        static void Main(string[] args)
+        static GpioController controller = null;
+                
+        static int statusLedPin = 17;      // Status Led Pin 
+        static int userLedPin = 27;        // User Led Pin
+        static int userButtonPin = 22;     // User Button 
+
+        static bool userLedOn = false;
+        static int statusLedPeriodMs = 1000;
+        static int statusLedOnMs = 200;
+
+        static void Main()
         {
             Init().Wait();
 
@@ -46,12 +60,90 @@ namespace GatewayModule
             ITransportSettings[] settings = { mqttSetting };
 
             // Open a connection to the Edge runtime
-            ModuleClient ioTHubModuleClient = await ModuleClient.CreateFromEnvironmentAsync(settings);
-            await ioTHubModuleClient.OpenAsync();
-            Console.WriteLine("IoT Hub module client initialized.");
+
+            ModuleClient gatewayModuleClient = await ModuleClient.CreateFromEnvironmentAsync(settings);
+            gatewayModuleClient.SetDesiredPropertyUpdateCallbackAsync(OnDesiredPropertyChanged, gatewayModuleClient).Wait();
+            await gatewayModuleClient.OpenAsync();
+
+            Console.WriteLine($"{DateTime.Now}: Gateway module initialized.");
+
+            // Obtiene el gemelo y propiedades deseadas
+
+            Console.WriteLine($"{DateTime.Now}: Retrieving twin..."); 
+            var twinTask = gatewayModuleClient.GetTwinAsync();
+            twinTask.Wait();
+            var twin = twinTask.Result;
+            Console.WriteLine(JsonConvert.SerializeObject(twin.Properties));
+
+            // Actualiza propiedades reportadas
+
+            Console.WriteLine($"{DateTime.Now}: Sending datetime app launch as reported property.");
+            TwinCollection reportedProperties = new TwinCollection();
+            reportedProperties["DateTimeLastAppLaunch"] = DateTime.Now;
+            await gatewayModuleClient.UpdateReportedPropertiesAsync(reportedProperties);
 
             // Register callback to be called when a message is received by the module
-            await ioTHubModuleClient.SetInputMessageHandlerAsync("input1", PipeMessage, ioTHubModuleClient);
+            await gatewayModuleClient.SetInputMessageHandlerAsync("input1", PipeMessage, gatewayModuleClient);
+
+            // Construct GPIO controller
+            controller = new GpioController();
+
+            // Establece la direccion de los pines de leds y boton
+
+            controller.OpenPin(statusLedPin, PinMode.Output);
+            controller.OpenPin(userLedPin, PinMode.Output);
+            controller.OpenPin(userButtonPin, PinMode.Input);
+
+            // Registra la funcion de llamada cuando se presiona el boton de usuario
+
+            controller.RegisterCallbackForPinValueChangedEvent(userButtonPin, PinEventTypes.Rising, (o, e) =>
+            {
+                Console.Write($"{DateTime.Now}: User Button presionado.");
+                if (userLedOn)
+                {
+                    controller.Write(userLedPin, PinValue.Low);
+                    userLedOn = false;
+                    Console.WriteLine($" User Led apagado.");
+                }
+                else
+                {
+                    controller.Write(userLedPin, PinValue.High);
+                    userLedOn = true;
+                    Console.WriteLine($" User Led encendido.");
+                }
+            });
+
+            // Inicia la tarea del led de status
+
+            var threadStatusLed = new Thread(() => ThreadBodyStatusLed(gatewayModuleClient));
+            threadStatusLed.Start();
+        }
+
+        private static async Task OnDesiredPropertyChanged(TwinCollection desiredProperties, object userContext)
+        {
+            Console.WriteLine($"{DateTime.Now}: Desired property change.");
+            Console.WriteLine(JsonConvert.SerializeObject(desiredProperties));
+            Console.WriteLine($"{DateTime.Now}: Sending datetime as reported property.");
+            TwinCollection reportedProperties = new TwinCollection
+            {
+                ["DateTimeLastDesiredPropertyChangeReceived"] = DateTime.Now
+            };
+
+            await ((ModuleClient)userContext).UpdateReportedPropertiesAsync(reportedProperties).ConfigureAwait(false);
+        }
+
+        private static async void ThreadBodyStatusLed(object userContext)
+        {
+            while (true)
+            {
+                // turn on the LED
+                controller.Write(statusLedPin, PinValue.Low);
+                await Task.Delay(statusLedOnMs);
+
+                // turn off the LED
+                controller.Write(statusLedPin, PinValue.High);
+                await Task.Delay(statusLedPeriodMs);
+            }
         }
 
         /// <summary>
@@ -71,7 +163,7 @@ namespace GatewayModule
 
             byte[] messageBytes = message.GetBytes();
             string messageString = Encoding.UTF8.GetString(messageBytes);
-            Console.WriteLine($"Received message: {counterValue}, Body: [{messageString}]");
+            //Console.WriteLine($"Received message: {counterValue}, Body: [{messageString}]");
 
             if (!string.IsNullOrEmpty(messageString))
             {
@@ -83,7 +175,7 @@ namespace GatewayModule
                     }
                     await moduleClient.SendEventAsync("output1", pipeMessage);
 
-                    Console.WriteLine("Received message sent");
+                    //Console.WriteLine("Received message sent");
                 }
             }
             return MessageResponse.Completed;

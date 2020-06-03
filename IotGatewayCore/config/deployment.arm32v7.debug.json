@@ -42,7 +42,7 @@
             "status": "running",
             "restartPolicy": "always",
             "settings": {
-              "image": "mgonzalez738/gatewaymodule:0.0.2-arm32v7",
+              "image": "mgonzalez738/gatewaymodule:0.0.2-arm32v7.debug",
               "createOptions": "{\"HostConfig\":{\"Privileged\":true,\"ExposedPorts\":{\"22/tcp\":{}},\"PortBindings\":{\"22/tcp\":[{\"HostPort\":\"22\"}]}}}"
             }
           },

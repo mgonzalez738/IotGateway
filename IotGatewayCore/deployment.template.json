@@ -64,7 +64,23 @@
             "restartPolicy": "always",
             "settings": {
               "image": "${MODULEDIR<../GatewayModule>}",
-              "createOptions": {}
+              "createOptions": {
+                "HostConfig": {
+                  "Privileged": true,
+                  "ExposedPorts": {
+                    "22/tcp": {
+
+                    }
+                  },
+                  "PortBindings": {
+                    "22/tcp": [
+                      {
+                        "HostPort": "22"
+                      }
+                    ]
+                  }
+                }
+              }
             }
           },
           "SimulatedTemperatureSensor": {
