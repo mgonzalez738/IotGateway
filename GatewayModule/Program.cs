@@ -11,21 +11,24 @@ namespace GatewayModule
     using Microsoft.Azure.Devices.Client;
     using Microsoft.Azure.Devices.Client.Transport.Mqtt;
 
-    using System.Device.Gpio;
     using Microsoft.Azure.Devices.Shared;
     using Newtonsoft.Json;
+    using System.Net;
+    using System.Net.Sockets;
+
+    using Hardware;
+    using TplSockets;
+    using TplResult;
+    using System.Device.Gpio;
 
     class Program
     {
         static int counter;
 
-        static GpioController controller = null;
-                
-        static int statusLedPin = 17;      // Status Led Pin 
-        static int userLedPin = 27;        // User Led Pin
-        static int userButtonPin = 22;     // User Button 
+        //static GpioController controller = null;
 
-        static bool userLedOn = false;
+        private static IGateway gateway;
+                
         static int statusLedPeriodMs = 1000;
         static int statusLedOnMs = 200;
 
@@ -85,33 +88,9 @@ namespace GatewayModule
             // Register callback to be called when a message is received by the module
             await gatewayModuleClient.SetInputMessageHandlerAsync("input1", PipeMessage, gatewayModuleClient);
 
-            // Construct GPIO controller
-            controller = new GpioController();
+            gateway = new GatewayRPI3Plus();
 
-            // Establece la direccion de los pines de leds y boton
-
-            controller.OpenPin(statusLedPin, PinMode.Output);
-            controller.OpenPin(userLedPin, PinMode.Output);
-            controller.OpenPin(userButtonPin, PinMode.Input);
-
-            // Registra la funcion de llamada cuando se presiona el boton de usuario
-
-            controller.RegisterCallbackForPinValueChangedEvent(userButtonPin, PinEventTypes.Rising, (o, e) =>
-            {
-                Console.Write($"{DateTime.Now}: User Button presionado.");
-                if (userLedOn)
-                {
-                    controller.Write(userLedPin, PinValue.Low);
-                    userLedOn = false;
-                    Console.WriteLine($" User Led apagado.");
-                }
-                else
-                {
-                    controller.Write(userLedPin, PinValue.High);
-                    userLedOn = true;
-                    Console.WriteLine($" User Led encendido.");
-                }
-            });
+            gateway.UserButtonPushed += Gateway_UserButtonPushed;          
 
             // Inicia la tarea del led de status
 
@@ -119,6 +98,11 @@ namespace GatewayModule
             threadStatusLed.Start();
         }
 
+        private static void Gateway_UserButtonPushed(object sender, EventArgs e)
+        {
+            Console.WriteLine($"{DateTime.Now}: User Button presionado.");
+            gateway.ToggleUserLed();
+        }
         private static async Task OnDesiredPropertyChanged(TwinCollection desiredProperties, object userContext)
         {
             Console.WriteLine($"{DateTime.Now}: Desired property change.");
@@ -137,13 +121,16 @@ namespace GatewayModule
             while (true)
             {
                 // turn on the LED
-                controller.Write(statusLedPin, PinValue.Low);
+                gateway.SetStatusLed(LedState.On);
                 await Task.Delay(statusLedOnMs);
 
                 // turn off the LED
-                controller.Write(statusLedPin, PinValue.High);
-                await Task.Delay(statusLedPeriodMs);
+                gateway.SetStatusLed(LedState.Off);
+                await Task.Delay(10000);//statusLedPeriodMs);
+
+                Console.WriteLine($"UTC Time received: {GetNetworkTime().Result.Value}."); 
             }
+            
         }
 
         /// <summary>
@@ -179,6 +166,85 @@ namespace GatewayModule
                 }
             }
             return MessageResponse.Completed;
+        }
+
+        public static async Task<Result<DateTime>> GetNetworkTime()
+        {
+            // Servidor NTP
+            const string ntpServer = "time.windows.com";
+
+            // NTP message size - 16 bytes of the digest (RFC 2030)
+            var ntpData = new byte[48];
+
+            //Setting the Leap Indicator, Version Number and Mode values
+            ntpData[0] = 0x1B; //LI = 0 (no warning), VN = 3 (IPv4 only), Mode = 3 (Client Mode)
+
+            var addresses = await Dns.GetHostEntryAsync(ntpServer);
+
+            //NTP uses UDP
+
+            using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp))
+            {
+
+                var connectResult = await socket.ConnectWithTimeoutAsync(addresses.AddressList[0].ToString(), 123, 5000);
+
+                if (connectResult.Failure)
+                {
+                    Console.WriteLine($"{DateTime.Now}: Error conctando al servidor NTP {ntpServer}");
+                    Console.WriteLine($"{connectResult.Error}");
+                    return Result.Fail<DateTime>(connectResult.Error);
+                }
+
+                var sendResult = await socket.SendWithTimeoutAsync(ntpData, 0, ntpData.Length, 0, 5000);
+
+                if (sendResult.Failure)
+                {
+                    Console.WriteLine($"{DateTime.Now}: Error enviando datos al servidor NTP {ntpServer}");
+                    Console.WriteLine($"{sendResult.Error}");
+                    return Result.Fail<DateTime>(connectResult.Error);
+                }
+
+                var receiveResult = await socket.ReceiveWithTimeoutAsync(ntpData, 0, ntpData.Length, 0, 5000);
+
+                if (receiveResult.Failure)
+                {
+                    Console.WriteLine($"{DateTime.Now}: Error recibiendo datos del servidor NTP {ntpServer}");
+                    Console.WriteLine($"{receiveResult.Error}");
+                    return Result.Fail<DateTime>(connectResult.Error);
+                }
+
+                socket.Close();
+            }
+
+            //Offset to get to the "Transmit Timestamp" field (time at which the reply 
+            //departed the server for the client, in 64-bit timestamp format."
+            const byte serverReplyTime = 40;
+
+            //Get the seconds part
+            ulong intPart = BitConverter.ToUInt32(ntpData, serverReplyTime);
+
+            //Get the seconds fraction
+            ulong fractPart = BitConverter.ToUInt32(ntpData, serverReplyTime + 4);
+
+            //Convert From big-endian to little-endian
+            intPart = SwapEndianness(intPart);
+            fractPart = SwapEndianness(fractPart);
+
+            var milliseconds = (intPart * 1000) + ((fractPart * 1000) / 0x100000000L);
+
+            //**UTC** time
+            var networkDateTime = (new DateTime(1900, 1, 1, 0, 0, 0, DateTimeKind.Utc)).AddMilliseconds((long)milliseconds);
+
+            return Result.Ok<DateTime>(networkDateTime);
+        }
+
+        // stackoverflow.com/a/3294698/162671
+        static uint SwapEndianness(ulong x)
+        {
+            return (uint)(((x & 0x000000ff) << 24) +
+                           ((x & 0x0000ff00) << 8) +
+                           ((x & 0x00ff0000) >> 8) +
+                           ((x & 0xff000000) >> 24));
         }
     }
 }

@@ -68,9 +68,7 @@
                 "HostConfig": {
                   "Privileged": true,
                   "ExposedPorts": {
-                    "22/tcp": {
-
-                    }
+                    "22/tcp": {}
                   },
                   "PortBindings": {
                     "22/tcp": [

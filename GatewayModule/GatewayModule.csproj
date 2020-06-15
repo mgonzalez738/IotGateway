@@ -21,7 +21,12 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="3.1.4" />
     <PackageReference Include="Microsoft.Extensions.Configuration.FileExtensions" Version="3.1.4" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="3.1.4" />
-    <PackageReference Include="System.Device.Gpio" Version="1.0.0" />
     <PackageReference Include="System.Runtime.Loader" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Hardware\Hardware.csproj" />
+    <ProjectReference Include="..\SocketTpl\TplSockets.csproj" />
+    <ProjectReference Include="..\TplResult\TplResult.csproj" />
   </ItemGroup>
 </Project>
