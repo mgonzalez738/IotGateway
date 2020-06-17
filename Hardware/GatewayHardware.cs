@@ -6,7 +6,7 @@ using Iot.Device.Rtc;
 namespace Hardware
 {
     public enum LedState { On, Off }
-    public interface IGateway
+    public interface IGatewayHardware
     {
         // Status and User Leds
 
@@ -26,10 +26,16 @@ namespace Hardware
 
         DateTime GetRtcDateTime();
         void SetRtcDateTime(DateTime dt);
-        double GetRtcTemperature();
+        Single GetRtcTemperature();
+
+        // Voltages
+
+        Single GetPowerVoltage();
+        Single GetSensedVoltage();
+        Single GetBatteryVoltage();
     }
 
-    public class GatewayRPI3Plus : IGateway
+    public class GatewayRPI3Plus : IGatewayHardware
     {
         // Hardware
         private static readonly int statusLedPin = 17;
@@ -45,6 +51,8 @@ namespace Hardware
 
         private I2cDevice i2cDeviceRtc;
         private Ds1307 rtcDs3231;                    // Utiliza Ds1307 para evitar conflictos con el century bit 
+
+        private Random rndGenerator;                // Generador de aleatorios para simular entradas
 
         public GatewayRPI3Plus()
         {
@@ -75,6 +83,10 @@ namespace Hardware
             I2cConnectionSettings settings = new I2cConnectionSettings(1, Ds1307.DefaultI2cAddress);
             i2cDeviceRtc = I2cDevice.Create(settings);
             rtcDs3231 = new Ds1307(i2cDeviceRtc);
+
+            // Inicializa el generador de numeros aleatorios
+
+            rndGenerator = new Random((int)(DateTime.Now.Ticks));     
         }
 
         /// <summary>
@@ -182,7 +194,7 @@ namespace Hardware
         /// <summary>
         /// Permite obtener la temperatura desde el RTC de la placa
         /// </summary>
-        public double GetRtcTemperature()
+        public Single GetRtcTemperature()
         {
             byte RTC_TEMP_MSB_REG_ADDR = 0x11;
 
@@ -192,12 +204,24 @@ namespace Hardware
             i2cDeviceRtc.Read(data);
 
             // datasheet Temperature part
-            return data[0] + (data[1] >> 6) * 0.25;
+            return (Single)(data[0] + (data[1] >> 6) * 0.25);
+        }
+
+        public float GetPowerVoltage()
+        {
+            return (Single)(12.0 + rndGenerator.NextDouble());
+        }
+
+        public float GetSensedVoltage()
+        {
+            return (Single)(18.0 + 2 * rndGenerator.NextDouble());
+        }
+
+        public float GetBatteryVoltage()
+        {
+            return (Single)(2.9 + 0.1 * rndGenerator.NextDouble());
         }
     }
 
-    public class GatewayProperties
-    {
-
-    }
+    
 }

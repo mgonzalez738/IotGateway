@@ -29,6 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Common\Common.csproj" />
     <ProjectReference Include="..\Hardware\Hardware.csproj" />
     <ProjectReference Include="..\SocketTpl\TplSockets.csproj" />
     <ProjectReference Include="..\TplResult\TplResult.csproj" />

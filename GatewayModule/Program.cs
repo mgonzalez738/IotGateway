@@ -19,13 +19,15 @@ namespace GatewayModule
     using Hardware;
     using TplSockets;
     using TplResult;
+    using Common;
 
     class Program
     {
-        private static IGateway gateway;
+        private static IGatewayHardware gwHardware;
 
         private static ModuleClient gatewayModuleClient;
 
+        private static ScheduleTimer timerPollData;
 
         static int statusLedPeriodMs = 1000;
         static int statusLedOnMs = 200;
@@ -59,13 +61,13 @@ namespace GatewayModule
             MqttTransportSettings mqttSetting = new MqttTransportSettings(TransportType.Mqtt_Tcp_Only);
             ITransportSettings[] settings = { mqttSetting };
 
-            // Crea conexion al hardware
+            // Crea conexion al hardware, datos
 
-            gateway = new GatewayRPI3Plus();
+            gwHardware = new GatewayRPI3Plus();
 
             // Registra funciones para manejar eventos del hardware
 
-            gateway.UserButtonPushed += Gateway_UserButtonPushed;
+            gwHardware.UserButtonPushed += Gateway_UserButtonPushed;
 
             // Crea una conexion al runtime Edge
 
@@ -81,6 +83,7 @@ namespace GatewayModule
             await gatewayModuleClient.SetMethodHandlerAsync("UpdateRtcFromNtp", OnUpdateRtcFromNtp, gatewayModuleClient);
             //await gatewayModuleClient.SetMethodHandlerAsync("SetUserLedState", OnSetUserLedState, gatewayModuleClient);
             await gatewayModuleClient.SetMethodHandlerAsync("ToggleUserLedState", OnToggleUserLedState, gatewayModuleClient);
+            await gatewayModuleClient.SetMethodHandlerAsync("PollData", OnPollData, gatewayModuleClient);
 
             // Registra las funciones para manejar los mensajes recibidos
 
@@ -98,7 +101,7 @@ namespace GatewayModule
 
             if (res.Success)
             {
-                gateway.SetRtcDateTime(res.Value);
+                gwHardware.SetRtcDateTime(res.Value);
                 string message = $"Fecha y Hora del RTC actualizada por NTP [{res.Value}].";
                 Console.WriteLine($"{DateTime.Now}> {message}.");
             }
@@ -126,14 +129,20 @@ namespace GatewayModule
 
             var threadStatusLed = new Thread(() => ThreadBodyStatusLed(gatewayModuleClient));
             threadStatusLed.Start();
+
+            // Inicia el timer de encuesta de datos del gateway
+
+            timerPollData = new ScheduleTimer();
+            timerPollData.Elapsed += TimerPollData_Elapsed;
+            _ = timerPollData.Start(15, ScheduleTimer.ScheduleUnit.minute);
         }
 
         private static async void Gateway_UserButtonPushed(object sender, EventArgs e)
         {
             Console.WriteLine($"{DateTime.Now}> User Button presionado.");
 
-            gateway.ToggleUserLed();
-            LedState st = gateway.GetUserLed();
+            gwHardware.ToggleUserLed();
+            LedState st = gwHardware.GetUserLed();
 
             object payload = new { UserLedState = st.ToString() };
             string result = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
@@ -160,16 +169,12 @@ namespace GatewayModule
             while (true)
             {
                 // turn on the LED
-                gateway.SetStatusLed(LedState.On);
+                gwHardware.SetStatusLed(LedState.On);
                 await Task.Delay(statusLedOnMs);
 
                 // turn off the LED
-                gateway.SetStatusLed(LedState.Off);
-                await Task.Delay(10000);//statusLedPeriodMs);
-                
-                Console.WriteLine($"UTC Time received: {GetNetworkTime().Result.Value}.");
-                Console.WriteLine($"RTC Time: {gateway.GetRtcDateTime()}.");
-                Console.WriteLine($"RTC Temperature: {gateway.GetRtcTemperature()}.");
+                gwHardware.SetStatusLed(LedState.Off);
+                await Task.Delay(statusLedPeriodMs);
             }
             
         }
@@ -272,6 +277,38 @@ namespace GatewayModule
                            ((x & 0xff000000) >> 24));
         }
 
+        static GatewayData GetGatewayData()
+        {
+            // Adquiere datos del gateway
+
+            GatewayData gd = new GatewayData
+            {               
+                SampleUtcTime = DateTime.UtcNow,
+                PowerVoltage = gwHardware.GetPowerVoltage(),
+                SensedVoltage = gwHardware.GetSensedVoltage(),
+                BatteryVoltage = gwHardware.GetBatteryVoltage(),
+                Temperature = gwHardware.GetRtcTemperature()
+            };
+
+            return gd;
+        }
+        private static async Task SendTelemetry(GatewayData gd)
+        {
+            // Serializa los datos a JSON
+
+            string result = JsonConvert.SerializeObject(gd, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+
+            // Envia los datos
+
+            Message msg = new Message(Encoding.UTF8.GetBytes(result));
+            msg.Properties.Add("Type", "Telemetry");
+            await gatewayModuleClient.SendEventAsync("output1", msg);
+
+            // Loggea el envio
+
+            Console.WriteLine($"{DateTime.Now}> Telemetria Datos: {result}");
+        }
+
         // METODOS DIRECTOS DEL MODULO       
 
         /// <summary>
@@ -297,7 +334,7 @@ namespace GatewayModule
             
             if (res.Success)
             {
-                gateway.SetRtcDateTime(res.Value);
+                gwHardware.SetRtcDateTime(res.Value);
                 string message = $"Fecha y Hora del RTC actualizada por NTP [{res.Value}].";
                 Console.WriteLine($"{DateTime.Now}> {message}.");
                 var result = JsonConvert.SerializeObject(message, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
@@ -318,9 +355,9 @@ namespace GatewayModule
         private static Task<MethodResponse> OnToggleUserLedState(MethodRequest methodRequest, object userContext)
         {
             Console.WriteLine($"{DateTime.Now}> Metodo {methodRequest.Name} recibido.");
-            
-            gateway.ToggleUserLed();
-            LedState st = gateway.GetUserLed();
+
+            gwHardware.ToggleUserLed();
+            LedState st = gwHardware.GetUserLed();
 
             object payload = new { UserLedState = st.ToString() };
             string result = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
@@ -328,6 +365,40 @@ namespace GatewayModule
             Console.WriteLine($"{DateTime.Now}> {result}");
 
             return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(result), 200));
+        }
+
+        /// <summary>
+        /// Fuerza la adquisicion y envio de telemetria
+        /// </summary>
+        private static Task<MethodResponse> OnPollData(MethodRequest methodRequest, object userContext)
+        {
+            Console.WriteLine($"{DateTime.Now}> Metodo {methodRequest.Name} recibido.");
+
+            // Obtiene los datos del gateway
+
+            GatewayData gd = GetGatewayData();
+
+            // Envia la telemetria
+
+            _ = SendTelemetry(gd);
+
+            // Envia los datos como respuesta del metodo
+
+            string result = JsonConvert.SerializeObject(gd, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+            return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(result), 200));
+        }
+
+        // ENCUESTA Y TELEMETRIA DE DATOS
+
+        private static async void TimerPollData_Elapsed(object sender, EventArgs e)
+        {
+            // Obtiene los datos del gateway
+
+            GatewayData gd = GetGatewayData();
+
+            // Envia la telemetria
+
+            await SendTelemetry(gd);            
         }
     }
 }
