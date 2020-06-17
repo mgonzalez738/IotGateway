@@ -11,7 +11,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TplSockets", "..\SocketTpl\
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TplResult", "..\TplResult\TplResult.csproj", "{BAFE3BDD-B9E5-4EA8-B743-6EB55E4C1DE4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hardware", "..\Hardware\Hardware.csproj", "{6574E0B9-D91C-4712-A730-B49A4CA8096A}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Hardware", "..\Hardware\Hardware.csproj", "{6574E0B9-D91C-4712-A730-B49A4CA8096A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

@@ -19,16 +19,14 @@ namespace GatewayModule
     using Hardware;
     using TplSockets;
     using TplResult;
-    using System.Device.Gpio;
 
     class Program
     {
-        static int counter;
-
-        //static GpioController controller = null;
-
         private static IGateway gateway;
-                
+
+        private static ModuleClient gatewayModuleClient;
+
+
         static int statusLedPeriodMs = 1000;
         static int statusLedOnMs = 200;
 
@@ -54,43 +52,75 @@ namespace GatewayModule
         }
 
         /// <summary>
-        /// Initializes the ModuleClient and sets up the callback to receive
-        /// messages containing temperature information
+        /// Inicializa el modulo Gateway
         /// </summary>
         static async Task Init()
         {
             MqttTransportSettings mqttSetting = new MqttTransportSettings(TransportType.Mqtt_Tcp_Only);
             ITransportSettings[] settings = { mqttSetting };
 
-            // Open a connection to the Edge runtime
+            // Crea conexion al hardware
 
-            ModuleClient gatewayModuleClient = await ModuleClient.CreateFromEnvironmentAsync(settings);
-            gatewayModuleClient.SetDesiredPropertyUpdateCallbackAsync(OnDesiredPropertyChanged, gatewayModuleClient).Wait();
+            gateway = new GatewayRPI3Plus();
+
+            // Registra funciones para manejar eventos del hardware
+
+            gateway.UserButtonPushed += Gateway_UserButtonPushed;
+
+            // Crea una conexion al runtime Edge
+
+            gatewayModuleClient = await ModuleClient.CreateFromEnvironmentAsync(settings);
+
+            // Registra la funcion para manejar cambios de propiedades deseadas
+
+            await gatewayModuleClient.SetDesiredPropertyUpdateCallbackAsync(OnDesiredPropertyChanged, gatewayModuleClient);
+
+            // Registra las funciones para manejar metodos directos 
+
+            await gatewayModuleClient.SetMethodDefaultHandlerAsync(OnNotImplementedMethod, gatewayModuleClient);
+            await gatewayModuleClient.SetMethodHandlerAsync("UpdateRtcFromNtp", OnUpdateRtcFromNtp, gatewayModuleClient);
+            //await gatewayModuleClient.SetMethodHandlerAsync("SetUserLedState", OnSetUserLedState, gatewayModuleClient);
+            await gatewayModuleClient.SetMethodHandlerAsync("ToggleUserLedState", OnToggleUserLedState, gatewayModuleClient);
+
+            // Registra las funciones para manejar los mensajes recibidos
+
+            await gatewayModuleClient.SetInputMessageHandlerAsync("input1", PipeMessage, gatewayModuleClient);
+
+            // Inicia el modulo
+
             await gatewayModuleClient.OpenAsync();
 
-            Console.WriteLine($"{DateTime.Now}: Gateway module initialized.");
+            Console.WriteLine($"{DateTime.Now}> Modulo Gateway inicializado.");
+
+            // Actualiza fecha y hora del RTC por NTP
+
+            var res = await GetNetworkTime();
+
+            if (res.Success)
+            {
+                gateway.SetRtcDateTime(res.Value);
+                string message = $"Fecha y Hora del RTC actualizada por NTP [{res.Value}].";
+                Console.WriteLine($"{DateTime.Now}> {message}.");
+            }
+            else
+            {
+                string message = $"Error actualizando RTC por NTP [{res.Error}].";
+                Console.WriteLine($"{DateTime.Now}> {message}.");
+            }
 
             // Obtiene el gemelo y propiedades deseadas
 
-            Console.WriteLine($"{DateTime.Now}: Retrieving twin..."); 
-            var twinTask = gatewayModuleClient.GetTwinAsync();
-            twinTask.Wait();
-            var twin = twinTask.Result;
+            Console.WriteLine($"{DateTime.Now}> Obtiene propiedades deseadas."); 
+            var twin = await gatewayModuleClient.GetTwinAsync();
             Console.WriteLine(JsonConvert.SerializeObject(twin.Properties));
 
             // Actualiza propiedades reportadas
 
-            Console.WriteLine($"{DateTime.Now}: Sending datetime app launch as reported property.");
+            Console.WriteLine($"{DateTime.Now}> Envia DateTimeLastAppLaunch como propiedad reportada.");
             TwinCollection reportedProperties = new TwinCollection();
             reportedProperties["DateTimeLastAppLaunch"] = DateTime.Now;
             await gatewayModuleClient.UpdateReportedPropertiesAsync(reportedProperties);
-
-            // Register callback to be called when a message is received by the module
-            await gatewayModuleClient.SetInputMessageHandlerAsync("input1", PipeMessage, gatewayModuleClient);
-
-            gateway = new GatewayRPI3Plus();
-
-            gateway.UserButtonPushed += Gateway_UserButtonPushed;          
+            Console.WriteLine(JsonConvert.SerializeObject(reportedProperties));        
 
             // Inicia la tarea del led de status
 
@@ -98,16 +128,25 @@ namespace GatewayModule
             threadStatusLed.Start();
         }
 
-        private static void Gateway_UserButtonPushed(object sender, EventArgs e)
+        private static async void Gateway_UserButtonPushed(object sender, EventArgs e)
         {
-            Console.WriteLine($"{DateTime.Now}: User Button presionado.");
+            Console.WriteLine($"{DateTime.Now}> User Button presionado.");
+
             gateway.ToggleUserLed();
+            LedState st = gateway.GetUserLed();
+
+            object payload = new { UserLedState = st.ToString() };
+            string result = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+
+            Console.WriteLine($"{DateTime.Now}> {result}");
+
+            await gatewayModuleClient.SendEventAsync("output1", new Message(Encoding.UTF8.GetBytes(result)));
         }
         private static async Task OnDesiredPropertyChanged(TwinCollection desiredProperties, object userContext)
         {
-            Console.WriteLine($"{DateTime.Now}: Desired property change.");
+            Console.WriteLine($"{DateTime.Now}> Desired property change.");
             Console.WriteLine(JsonConvert.SerializeObject(desiredProperties));
-            Console.WriteLine($"{DateTime.Now}: Sending datetime as reported property.");
+            Console.WriteLine($"{DateTime.Now}> Sending datetime as reported property.");
             TwinCollection reportedProperties = new TwinCollection
             {
                 ["DateTimeLastDesiredPropertyChangeReceived"] = DateTime.Now
@@ -127,45 +166,31 @@ namespace GatewayModule
                 // turn off the LED
                 gateway.SetStatusLed(LedState.Off);
                 await Task.Delay(10000);//statusLedPeriodMs);
-
-                Console.WriteLine($"UTC Time received: {GetNetworkTime().Result.Value}."); 
+                
+                Console.WriteLine($"UTC Time received: {GetNetworkTime().Result.Value}.");
+                Console.WriteLine($"RTC Time: {gateway.GetRtcDateTime()}.");
+                Console.WriteLine($"RTC Temperature: {gateway.GetRtcTemperature()}.");
             }
             
         }
 
         /// <summary>
-        /// This method is called whenever the module is sent a message from the EdgeHub. 
-        /// It just pipe the messages without any change.
-        /// It prints all the incoming messages.
+        /// Metodo que procesa los mensajes recibidos por el modulo
         /// </summary>
-        static async Task<MessageResponse> PipeMessage(Message message, object userContext)
+        static Task<MessageResponse> PipeMessage(Message message, object userContext)
         {
-            int counterValue = Interlocked.Increment(ref counter);
+            Console.WriteLine($"{DateTime.Now}: Mensaje recibido.");
 
-            var moduleClient = userContext as ModuleClient;
+            var moduleClient = (ModuleClient)userContext;
             if (moduleClient == null)
             {
-                throw new InvalidOperationException("UserContext doesn't contain " + "expected values");
+                Console.WriteLine($"{DateTime.Now}: Error: No indica Modulo en el contexto.");
             }
 
             byte[] messageBytes = message.GetBytes();
             string messageString = Encoding.UTF8.GetString(messageBytes);
-            //Console.WriteLine($"Received message: {counterValue}, Body: [{messageString}]");
-
-            if (!string.IsNullOrEmpty(messageString))
-            {
-                using (var pipeMessage = new Message(messageBytes))
-                {
-                    foreach (var prop in message.Properties)
-                    {
-                        pipeMessage.Properties.Add(prop.Key, prop.Value);
-                    }
-                    await moduleClient.SendEventAsync("output1", pipeMessage);
-
-                    //Console.WriteLine("Received message sent");
-                }
-            }
-            return MessageResponse.Completed;
+            
+            return Task.FromResult(MessageResponse.Completed);
         }
 
         public static async Task<Result<DateTime>> GetNetworkTime()
@@ -245,6 +270,64 @@ namespace GatewayModule
                            ((x & 0x0000ff00) << 8) +
                            ((x & 0x00ff0000) >> 8) +
                            ((x & 0xff000000) >> 24));
+        }
+
+        // METODOS DIRECTOS DEL MODULO       
+
+        /// <summary>
+        /// Maneja los metodos recibidos no implementados
+        /// </summary>
+        private static Task<MethodResponse> OnNotImplementedMethod(MethodRequest methodRequest, object userContext)
+        {
+            string message = $"Metodo {methodRequest.Name} no implementado";
+
+            Console.WriteLine($"{DateTime.Now}> {message}.");
+           
+            var result = JsonConvert.SerializeObject(message, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+            return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(result), 404));
+        }
+
+        /// <summary>
+        /// Actualiza el RTC por NTP
+        /// </summary>
+        private static async Task<MethodResponse> OnUpdateRtcFromNtp(MethodRequest methodRequest, object userContext)
+        {
+            Console.WriteLine($"{DateTime.Now}> Metodo {methodRequest.Name} recibido.");
+            var res = await GetNetworkTime();
+            
+            if (res.Success)
+            {
+                gateway.SetRtcDateTime(res.Value);
+                string message = $"Fecha y Hora del RTC actualizada por NTP [{res.Value}].";
+                Console.WriteLine($"{DateTime.Now}> {message}.");
+                var result = JsonConvert.SerializeObject(message, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+                return new MethodResponse(Encoding.UTF8.GetBytes(result), 200);
+            }
+            else
+            {
+                string message = $"Error actualizando RTC por NTP [{res.Error}].";
+                Console.WriteLine($"{DateTime.Now}> {message}.");
+                var result = JsonConvert.SerializeObject(message, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+                return new MethodResponse(Encoding.UTF8.GetBytes(result), 404);
+            }
+        }
+
+        /// <summary>
+        /// Alterna el estado del led de usuario
+        /// </summary>
+        private static Task<MethodResponse> OnToggleUserLedState(MethodRequest methodRequest, object userContext)
+        {
+            Console.WriteLine($"{DateTime.Now}> Metodo {methodRequest.Name} recibido.");
+            
+            gateway.ToggleUserLed();
+            LedState st = gateway.GetUserLed();
+
+            object payload = new { UserLedState = st.ToString() };
+            string result = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+
+            Console.WriteLine($"{DateTime.Now}> {result}");
+
+            return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(result), 200));
         }
     }
 }

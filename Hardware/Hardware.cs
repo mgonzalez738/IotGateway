@@ -1,11 +1,15 @@
 ﻿using System;
 using System.Device.Gpio;
+using System.Device.I2c;
+using Iot.Device.Rtc;
 
 namespace Hardware
 {
     public enum LedState { On, Off }
     public interface IGateway
     {
+        // Status and User Leds
+
         void SetStatusLed(LedState state);
         LedState GetStatusLed();
         void ToggleStatusLed();
@@ -14,7 +18,15 @@ namespace Hardware
         LedState GetUserLed();
         void ToggleUserLed();
 
+        // User Button
+
         event EventHandler UserButtonPushed;
+
+        // Rtc
+
+        DateTime GetRtcDateTime();
+        void SetRtcDateTime(DateTime dt);
+        double GetRtcTemperature();
     }
 
     public class GatewayRPI3Plus : IGateway
@@ -30,6 +42,9 @@ namespace Hardware
         private static LedState userLedState;
 
         public event EventHandler UserButtonPushed;
+
+        private I2cDevice i2cDeviceRtc;
+        private Ds1307 rtcDs3231;                    // Utiliza Ds1307 para evitar conflictos con el century bit 
 
         public GatewayRPI3Plus()
         {
@@ -54,6 +69,12 @@ namespace Hardware
             {
                 OnUserButtonPushed(new EventArgs());
             });
+
+            // Configura el RTC DS3231 como dispositivo del bus I2C 1 
+
+            I2cConnectionSettings settings = new I2cConnectionSettings(1, Ds1307.DefaultI2cAddress);
+            i2cDeviceRtc = I2cDevice.Create(settings);
+            rtcDs3231 = new Ds1307(i2cDeviceRtc);
         }
 
         /// <summary>
@@ -134,9 +155,49 @@ namespace Hardware
             }
         }
 
+        /// <summary>
+        /// Invoca el evento UserButtonPushed
+        /// </summary>
         protected virtual void OnUserButtonPushed(EventArgs e)
         {
             UserButtonPushed?.Invoke(this, e);
         }
+
+        /// <summary>
+        /// Permite obtener la hora desde el RTC de la placa
+        /// </summary>
+        public DateTime GetRtcDateTime()
+        {
+            return rtcDs3231.DateTime;
+        }
+
+        /// <summary>
+        /// Permite establecer la hora al RTC de la placa
+        /// </summary>
+        public void SetRtcDateTime(DateTime dt)
+        {
+            rtcDs3231.DateTime = dt;
+        }
+
+        /// <summary>
+        /// Permite obtener la temperatura desde el RTC de la placa
+        /// </summary>
+        public double GetRtcTemperature()
+        {
+            byte RTC_TEMP_MSB_REG_ADDR = 0x11;
+
+            Span<byte> data = stackalloc byte[2];
+
+            i2cDeviceRtc.WriteByte(RTC_TEMP_MSB_REG_ADDR);
+            i2cDeviceRtc.Read(data);
+
+            // datasheet Temperature part
+            return data[0] + (data[1] >> 6) * 0.25;
+        }
+    }
+
+    public class GatewayProperties
+    {
+
     }
 }

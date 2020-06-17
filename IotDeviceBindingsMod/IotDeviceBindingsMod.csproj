@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>netcoreapp3.1</TargetFramework>
@@ -6,8 +6,6 @@
 
   <ItemGroup>
     <PackageReference Include="Iot.Device.Bindings" Version="1.0.0" />
-    <PackageReference Include="Microsoft.Azure.Devices.Client" Version="1.26.0" />
-    <PackageReference Include="System.Device.Gpio" Version="1.0.0" />
   </ItemGroup>
 
 </Project>
