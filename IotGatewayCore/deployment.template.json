@@ -60,12 +60,24 @@
           "GatewayModule": {
             "version": "1.0.0",
             "type": "docker",
+            "env": {
+              "storageFolder": {
+                "value": "/storage/"
+              },
+              "configFolder": {
+                "value": "/config/"
+              }
+            },
             "status": "running",
             "restartPolicy": "always",
             "settings": {
               "image": "${MODULEDIR<../GatewayModule>}",
               "createOptions": {
                 "HostConfig": {
+                  "Binds": [
+                    "/etc/iotedge/GatewayModule/storage/:/storage/",
+                    "/etc/iotedge/GatewayModule/config/:/config/"
+                  ],
                   "Privileged": true,
                   "ExposedPorts": {
                     "22/tcp": {}

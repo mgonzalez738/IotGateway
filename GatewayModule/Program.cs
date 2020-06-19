@@ -20,14 +20,19 @@ namespace GatewayModule
     using TplSockets;
     using TplResult;
     using Common;
+    using System.Runtime.Intrinsics.X86;
+    using Newtonsoft.Json.Linq;
+    using System.Linq;
 
     class Program
     {
         private static IGatewayHardware gwHardware;
-
         private static ModuleClient gatewayModuleClient;
-
         private static ScheduleTimer timerPollData;
+        private static String storageFolder;
+        private static String configFolder;
+
+        private static GatewayProperties gwProperties;
 
         static int statusLedPeriodMs = 1000;
         static int statusLedOnMs = 200;
@@ -58,110 +63,161 @@ namespace GatewayModule
         /// </summary>
         static async Task Init()
         {
+            // Establece el protocolo de comunicacion
+
             MqttTransportSettings mqttSetting = new MqttTransportSettings(TransportType.Mqtt_Tcp_Only);
             ITransportSettings[] settings = { mqttSetting };
 
-            // Crea conexion al hardware, datos
+            // Crea conexion al hardware
 
             gwHardware = new GatewayRPI3Plus();
-
-            // Registra funciones para manejar eventos del hardware
-
             gwHardware.UserButtonPushed += Gateway_UserButtonPushed;
 
             // Crea una conexion al runtime Edge
 
             gatewayModuleClient = await ModuleClient.CreateFromEnvironmentAsync(settings);
-
-            // Registra la funcion para manejar cambios de propiedades deseadas
-
             await gatewayModuleClient.SetDesiredPropertyUpdateCallbackAsync(OnDesiredPropertyChanged, gatewayModuleClient);
-
-            // Registra las funciones para manejar metodos directos 
-
             await gatewayModuleClient.SetMethodDefaultHandlerAsync(OnNotImplementedMethod, gatewayModuleClient);
             await gatewayModuleClient.SetMethodHandlerAsync("UpdateRtcFromNtp", OnUpdateRtcFromNtp, gatewayModuleClient);
             //await gatewayModuleClient.SetMethodHandlerAsync("SetUserLedState", OnSetUserLedState, gatewayModuleClient);
             await gatewayModuleClient.SetMethodHandlerAsync("ToggleUserLedState", OnToggleUserLedState, gatewayModuleClient);
             await gatewayModuleClient.SetMethodHandlerAsync("PollData", OnPollData, gatewayModuleClient);
-
-            // Registra las funciones para manejar los mensajes recibidos
-
             await gatewayModuleClient.SetInputMessageHandlerAsync("input1", PipeMessage, gatewayModuleClient);
 
             // Inicia el modulo
 
             await gatewayModuleClient.OpenAsync();
-
             Console.WriteLine($"{DateTime.Now}> Modulo Gateway inicializado.");
+
+            // Envia el evento de reinicio al Hub
+
+            GatewayEvent gevt = new GatewayEvent();
+            gevt.UtcTime = DateTime.Now;
+            gevt.MessageType = GatewayEventType.Info;
+            gevt.Message = "Gateway Reiniciado";
+            _ = SendEventMessage(gevt);
+
+            // Obtiene el path a las carpetas en el host
+
+            storageFolder = Environment.GetEnvironmentVariable("storageFolder");
+            configFolder = Environment.GetEnvironmentVariable("configFolder");
+            Console.WriteLine($"{DateTime.Now}> Path a carpeta de almacenamiento cargado: {storageFolder}.");
+            Console.WriteLine($"{DateTime.Now}> Path a carpeta de configuracion cargado: {configFolder}.");
+
+            // Carga la configuracion desde host
+            // En caso de error, crea configuracion default y la guarda en Host
+
+            try
+            {
+                gwProperties = GatewayProperties.FromJsonFile(configFolder + "config.json");
+                Console.WriteLine($"{DateTime.Now}> Configuracion cargada desde host.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{DateTime.Now}> Error cargando configuracion desde host -> {ex.Message}");
+                gwProperties = new GatewayProperties();
+                Console.WriteLine($"{DateTime.Now}> Configuracion por defecto creada.");
+                try
+                {
+                    gwProperties.ToJsonFile(configFolder + "config.json");
+                    Console.WriteLine($"{DateTime.Now}> Configuracion por defecto guardada en host.");
+                }
+                catch (Exception ex2)
+                {
+                    Console.WriteLine($"{DateTime.Now}> Error guardando configuración en Host -> {ex2.Message}");
+                }         
+            }            
 
             // Actualiza fecha y hora del RTC por NTP
 
             var res = await GetNetworkTime();
-
             if (res.Success)
             {
                 gwHardware.SetRtcDateTime(res.Value);
-                string message = $"Fecha y Hora del RTC actualizada por NTP [{res.Value}].";
-                Console.WriteLine($"{DateTime.Now}> {message}.");
+                Console.WriteLine($"{DateTime.Now}> Fecha y Hora del RTC actualizada por NTP [{res.Value}].");
             }
             else
-            {
-                string message = $"Error actualizando RTC por NTP [{res.Error}].";
-                Console.WriteLine($"{DateTime.Now}> {message}.");
-            }
+                Console.WriteLine($"{DateTime.Now}> Error actualizando RTC por NTP[{ res.Error}].");
 
-            // Obtiene el gemelo y propiedades deseadas
-
-            Console.WriteLine($"{DateTime.Now}> Obtiene propiedades deseadas."); 
+            // Obtiene el gemelo y sincroniza propiedades con deseadas del Hub
+ 
             var twin = await gatewayModuleClient.GetTwinAsync();
-            Console.WriteLine(JsonConvert.SerializeObject(twin.Properties));
+            Console.WriteLine($"{DateTime.Now}> Propiedades deseadas descargadas desde el Hub.");
+            UpdateGatewayProperties(twin.Properties.Desired);
 
             // Actualiza propiedades reportadas
 
-            Console.WriteLine($"{DateTime.Now}> Envia DateTimeLastAppLaunch como propiedad reportada.");
-            TwinCollection reportedProperties = new TwinCollection();
-            reportedProperties["DateTimeLastAppLaunch"] = DateTime.Now;
-            await gatewayModuleClient.UpdateReportedPropertiesAsync(reportedProperties);
-            Console.WriteLine(JsonConvert.SerializeObject(reportedProperties));        
+            await SendReportedProperties(gwProperties);
+            Console.WriteLine($"{DateTime.Now}> Actualizacion de propiedades reportadas enviada.");
 
             // Inicia la tarea del led de status
 
             var threadStatusLed = new Thread(() => ThreadBodyStatusLed(gatewayModuleClient));
             threadStatusLed.Start();
 
-            // Inicia el timer de encuesta de datos del gateway
+            // Crea el timer de telemetria de datos del gateway y lo inicia si esta habilitado
 
             timerPollData = new ScheduleTimer();
             timerPollData.Elapsed += TimerPollData_Elapsed;
-            _ = timerPollData.Start(15, ScheduleTimer.ScheduleUnit.minute);
+            if (gwProperties.PollData.Enabled)
+            {
+                timerPollData.Start(gwProperties.PollData.Period, gwProperties.PollData.Unit);
+                Console.WriteLine($"{DateTime.Now}> Primera ejecucion telemetria datos: {timerPollData.FirstExcecution} / Periodo: {timerPollData.PeriodMs} ms");
+            }
+            else
+                Console.WriteLine($"{DateTime.Now}> Telemetria datos deshabilitada.");
+
+            // Registra eventos de cambio de propiedades
+
+            gwProperties.PollDataChanged += GwProperties_PollDataChanged;
         }
 
-        private static async void Gateway_UserButtonPushed(object sender, EventArgs e)
+        private static void GwProperties_PollDataChanged(object sender, EventArgs e)
         {
+            Console.WriteLine($"{DateTime.Now}> Propiedad PollData modificada.");
+            
+            // Detiene la encuesta
+
+            timerPollData.Stop();
+
+            if (gwProperties.PollData.Enabled)
+            {
+                timerPollData.Start(gwProperties.PollData.Period, gwProperties.PollData.Unit);
+                Console.WriteLine($"{DateTime.Now}> Nueva ejecucion telemetria datos: {timerPollData.FirstExcecution} / Periodo: {timerPollData.PeriodMs} ms");
+            }
+            else
+                Console.WriteLine($"{DateTime.Now}> Telemetria datos deshabilitada.");
+        }
+
+        private static void Gateway_UserButtonPushed(object sender, EventArgs e)
+        {
+            // Loggea en consola el boton pulsado
             Console.WriteLine($"{DateTime.Now}> User Button presionado.");
 
+            // Cambia el estado del led de usuario
             gwHardware.ToggleUserLed();
-            LedState st = gwHardware.GetUserLed();
 
-            object payload = new { UserLedState = st.ToString() };
-            string result = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
-
-            Console.WriteLine($"{DateTime.Now}> {result}");
-
-            await gatewayModuleClient.SendEventAsync("output1", new Message(Encoding.UTF8.GetBytes(result)));
+            // Crea el evento
+            GatewayEvent gevt = new GatewayEvent();
+            gevt.UtcTime = DateTime.Now;
+            gevt.MessageType = GatewayEventType.Info;
+            gevt.Message = "User Button presionado";
+                        
+            // Envia el evento
+            _ = SendEventMessage(gevt);
         }
+
         private static async Task OnDesiredPropertyChanged(TwinCollection desiredProperties, object userContext)
         {
-            Console.WriteLine($"{DateTime.Now}> Desired property change.");
-            Console.WriteLine(JsonConvert.SerializeObject(desiredProperties));
-            Console.WriteLine($"{DateTime.Now}> Sending datetime as reported property.");
-            TwinCollection reportedProperties = new TwinCollection
-            {
-                ["DateTimeLastDesiredPropertyChangeReceived"] = DateTime.Now
-            };
+            Console.WriteLine($"{DateTime.Now}> Actualizacion de propiedades deseadas recibida.");
 
-            await ((ModuleClient)userContext).UpdateReportedPropertiesAsync(reportedProperties).ConfigureAwait(false);
+            UpdateGatewayProperties(desiredProperties);
+
+            // Envia las propiedades reportadas
+
+            await SendReportedProperties(gwProperties);
+
+            Console.WriteLine($"{DateTime.Now}> Actualizacion de propiedades reportadas enviada.");
         }
 
         private static async void ThreadBodyStatusLed(object userContext)
@@ -277,13 +333,26 @@ namespace GatewayModule
                            ((x & 0xff000000) >> 24));
         }
 
+        static void UpdateGatewayProperties(TwinCollection desiredProp)
+        {
+            // Poll Data
+            try
+            {
+                GatewayDataPollConfiguration gpdc = GatewayDataPollConfiguration.FromJsonString(desiredProp["PollData"].ToString());
+                gwProperties.PollData = gpdc;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{DateTime.Now}> Error en configuracion de Poll Data (Ingnorando cambios) -> {ex.Message}");
+            }                        
+        }
+
         static GatewayData GetGatewayData()
         {
             // Adquiere datos del gateway
-
             GatewayData gd = new GatewayData
             {               
-                SampleUtcTime = DateTime.UtcNow,
+                UtcTime = DateTime.UtcNow,
                 PowerVoltage = gwHardware.GetPowerVoltage(),
                 SensedVoltage = gwHardware.GetSensedVoltage(),
                 BatteryVoltage = gwHardware.GetBatteryVoltage(),
@@ -292,21 +361,36 @@ namespace GatewayModule
 
             return gd;
         }
-        private static async Task SendTelemetry(GatewayData gd)
+        private static async Task SendTelemetryMessage(GatewayData gd)
         {
-            // Serializa los datos a JSON
+            // Crea el mensaje a partir de los datos del gateway
+            Message msg = new Message(Encoding.UTF8.GetBytes(gd.ToJsonString()));
 
-            string result = JsonConvert.SerializeObject(gd, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
-
-            // Envia los datos
-
-            Message msg = new Message(Encoding.UTF8.GetBytes(result));
-            msg.Properties.Add("Type", "Telemetry");
+            // Agrega propiedad identificando al mensaje como de Telemetria
+            msg.Properties.Add("Type", GatewayMessageType.Telemetry.ToString());
             await gatewayModuleClient.SendEventAsync("output1", msg);
 
-            // Loggea el envio
+            // Loggea el envio en consola
+            Console.WriteLine($"{DateTime.Now}> Envio Telemetria: {gd.ToJsonString()}");
+        }
 
-            Console.WriteLine($"{DateTime.Now}> Telemetria Datos: {result}");
+        private static async Task SendEventMessage(GatewayEvent gevt)
+        {
+            // Crea el mensaje a partir del evento del gateway
+            Message msg = new Message(Encoding.UTF8.GetBytes(gevt.ToJsonString()));
+
+            // Agrega propiedad identificando al mensaje como Evento
+            msg.Properties.Add("Type", GatewayMessageType.Event.ToString());
+            await gatewayModuleClient.SendEventAsync("output1", msg);
+
+            // Loggea el envio en consola
+            Console.WriteLine($"{DateTime.Now}> Envio Evento: {gevt.ToJsonString()}");
+        }
+
+        private static async Task SendReportedProperties(GatewayProperties gp)
+        {
+            TwinCollection reportedProperties = new TwinCollection(gp.ToJsonString());
+            await gatewayModuleClient.UpdateReportedPropertiesAsync(reportedProperties);
         }
 
         // METODOS DIRECTOS DEL MODULO       
@@ -380,17 +464,16 @@ namespace GatewayModule
 
             // Envia la telemetria
 
-            _ = SendTelemetry(gd);
+            _ = SendTelemetryMessage(gd);
 
             // Envia los datos como respuesta del metodo
 
-            string result = JsonConvert.SerializeObject(gd, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
-            return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(result), 200));
+            return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(gd.ToJsonString()), 200));
         }
 
         // ENCUESTA Y TELEMETRIA DE DATOS
 
-        private static async void TimerPollData_Elapsed(object sender, EventArgs e)
+        private static void TimerPollData_Elapsed(object sender, EventArgs e)
         {
             // Obtiene los datos del gateway
 
@@ -398,7 +481,7 @@ namespace GatewayModule
 
             // Envia la telemetria
 
-            await SendTelemetry(gd);            
+            _ = SendTelemetryMessage(gd);            
         }
     }
 }

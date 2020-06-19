@@ -1,36 +1,41 @@
 ﻿using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Timers;
+using Timer = System.Timers.Timer;
 
 namespace Common
 {
-    
     public class ScheduleTimer
     {
         public enum ScheduleUnit { second, minute, hour, day };
+        public enum ScheduleState { stopped, waiting, running };
 
         public event EventHandler Elapsed;
 
         private int periodMs;
-        private ScheduleUnit periodUnit;
-
-        private Timer timer;
+        private DateTime firstExecution;
+        private ScheduleState state;
+        private System.Timers.Timer timer;
+        private CancellationTokenSource tokenSource; 
 
         public ScheduleTimer()
         {
             timer = new Timer();
             timer.AutoReset = true;
             timer.Elapsed += Timer_Elapsed;
+            state = ScheduleState.stopped;
+            tokenSource = new CancellationTokenSource();
         }
 
-        public async Task Start(int period, ScheduleUnit unit)
+        private async Task start(int period, ScheduleUnit unit, CancellationToken token)
         {
-            periodUnit = unit;
+            state = ScheduleState.waiting;
 
             // Calcula el periodo en base a la unidad
 
-            switch (periodUnit)
+            switch (unit)
             {
                 case ScheduleUnit.second:
                     periodMs = period * 1000;
@@ -56,21 +61,34 @@ namespace Common
 
             long divFirstExec = (long)Math.Floor((decimal)(timeNow.Ticks / spanPeriod.Ticks)) + 1;
 
-            DateTime firstExec = new DateTime(divFirstExec * spanPeriod.Ticks);
+            firstExecution = new DateTime(divFirstExec * spanPeriod.Ticks);
 
-            Console.WriteLine($"{DateTime.Now}> Primera ejecucion telemetria datos: {firstExec} / Periodo: {periodMs} ms");
+            // Espera se cumpla el periodo o se cancele el timer
 
-            await Task.Delay(firstExec.Subtract(timeNow));   
-            
-            // Arranca el timer y ejecuta la primera vez
+            await Task.Delay(firstExecution.Subtract(timeNow), token);
 
-            timer.Start();
-            Timer_Elapsed(this, null);
+            // Arranca el timer si no se pidio la cancelacion y ejecuta la primera vez el evento
+
+            if (!token.IsCancellationRequested)
+            {
+                state = ScheduleState.running;
+                timer.Start();
+                Timer_Elapsed(this, null);
+            }
+        }
+
+        public void Start(int period, ScheduleUnit unit)
+        {
+            _ = start(period, unit, tokenSource.Token);
         }
 
         public void Stop()
         {
-            timer.Stop();
+            if (state == ScheduleState.waiting)
+                tokenSource.Cancel();
+            if( state == ScheduleState.running)
+                timer.Stop();
+            state = ScheduleState.stopped;
         }
 
         private void Timer_Elapsed(object sender, ElapsedEventArgs e)
@@ -81,6 +99,21 @@ namespace Common
         protected virtual void OnElapsed(ElapsedEventArgs e)
         {
             Elapsed?.Invoke(this, e);
+        }
+
+        public ScheduleState State
+        {
+            get { return state; }
+        }
+
+        public int PeriodMs
+        {
+            get { return periodMs; }
+        }
+
+        public DateTime FirstExcecution
+        {
+            get { return firstExecution; }
         }
     }
 }

@@ -10,4 +10,8 @@
     <PackageReference Include="System.Device.Gpio" Version="1.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Common\Common.csproj" />
+  </ItemGroup>
+
 </Project>
