@@ -60,21 +60,37 @@
           "GatewayModule": {
             "version": "1.0.0",
             "type": "docker",
+            "env": {
+              "storageFolder": {
+                "value": "/storage/"
+              },
+              "configFolder": {
+                "value": "/config/"
+              }
+            },
             "status": "running",
             "restartPolicy": "always",
             "settings": {
               "image": "${MODULEDIR<../GatewayModule>}",
-              "createOptions": {}
-            }
-          },
-          "SimulatedTemperatureSensor": {
-            "version": "1.0",
-            "type": "docker",
-            "status": "running",
-            "restartPolicy": "always",
-            "settings": {
-              "image": "mcr.microsoft.com/azureiotedge-simulated-temperature-sensor:1.0",
-              "createOptions": {}
+              "createOptions": {
+                "HostConfig": {
+                  "Binds": [
+                    "/etc/iotedge/GatewayModule/storage/:/storage/",
+                    "/etc/iotedge/GatewayModule/config/:/config/"
+                  ],
+                  "Privileged": true,
+                  "ExposedPorts": {
+                    "22/tcp": {}
+                  },
+                  "PortBindings": {
+                    "22/tcp": [
+                      {
+                        "HostPort": "22"
+                      }
+                    ]
+                  }
+                }
+              }
             }
           }
         }
@@ -84,8 +100,7 @@
       "properties.desired": {
         "schemaVersion": "1.0",
         "routes": {
-          "GatewayModuleToIoTHub": "FROM /messages/modules/GatewayModule/outputs/* INTO $upstream",
-          "sensorToGatewayModule": "FROM /messages/modules/SimulatedTemperatureSensor/outputs/temperatureOutput INTO BrokeredEndpoint(\"/modules/GatewayModule/inputs/input1\")"
+          "GatewayModuleToIoTHub": "FROM /messages/modules/GatewayModule/outputs/* INTO $upstream"
         },
         "storeAndForwardConfiguration": {
           "timeToLiveSecs": 7200

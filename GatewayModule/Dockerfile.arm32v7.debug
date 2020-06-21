@@ -4,21 +4,31 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends unzip procps && \
     rm -rf /var/lib/apt/lists/*
 
-RUN useradd -ms /bin/bash moduleuser
-USER moduleuser
+
+#RUN useradd -ms /bin/bash moduleuser
+#USER moduleuser
 RUN curl -sSL https://aka.ms/getvsdbgsh | bash /dev/stdin -v latest -l ~/vsdbg
 
-FROM mcr.microsoft.com/dotnet/core/sdk:3.1-buster AS build-env
+COPY authorized_keys ./authorized_keys 
+RUN mkdir ~/.ssh/ 
+RUN mv /authorized_keys ~/.ssh/authorized_keys 
+ 
+RUN apt-get update 
+RUN apt-get install unzip 
+RUN apt-get install openssh-server unzip curl -y 
+RUN apt-get install emacs24-nox -y 
+
+FROM mcr.microsoft.com/dotnet/core/sdk:3.1-buster-arm32v7 AS build-env
 WORKDIR /app
 
-COPY *.csproj ./
+COPY ./GatewayModule/*.csproj ./
 RUN dotnet restore
 
 COPY . ./
-RUN dotnet publish -c Debug -o out
+RUN dotnet publish "GatewayModule/GatewayModule.csproj" -c Debug -o out
 
 FROM base
 WORKDIR /app
-COPY --from=build-env /app/out ./
+COPY --from=build-env /app/GatewayModule/out ./
 
 ENTRYPOINT ["dotnet", "GatewayModule.dll"]
