@@ -78,6 +78,7 @@ namespace GatewayModule
             //gwHardware = new GatewayRPI4();
             gwHardware.UserButtonPushed += GwHardware_UserButtonPushed;
 
+            
             // Crea una conexion al runtime Edge
 
             gatewayModuleClient = await ModuleClient.CreateFromEnvironmentAsync(settings);
