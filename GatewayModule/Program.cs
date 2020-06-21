@@ -23,6 +23,7 @@ namespace GatewayModule
     using System.Runtime.Intrinsics.X86;
     using Newtonsoft.Json.Linq;
     using System.Linq;
+    using System.Globalization;
 
     class Program
     {
@@ -68,14 +69,20 @@ namespace GatewayModule
             MqttTransportSettings mqttSetting = new MqttTransportSettings(TransportType.Mqtt_Tcp_Only);
             ITransportSettings[] settings = { mqttSetting };
 
+            //AmqpTransportSettings ampqSetting = new AmqpTransportSettings(TransportType.Amqp_Tcp_Only);
+            //ITransportSettings[] settings = { ampqSetting };
+
             // Crea conexion al hardware
 
             gwHardware = new GatewayRPI3Plus();
-            gwHardware.UserButtonPushed += Gateway_UserButtonPushed;
+            //gwHardware = new GatewayRPI4();
+            gwHardware.UserButtonPushed += GwHardware_UserButtonPushed;
 
             // Crea una conexion al runtime Edge
 
             gatewayModuleClient = await ModuleClient.CreateFromEnvironmentAsync(settings);
+            gatewayModuleClient.SetRetryPolicy(new NoRetry());
+
             await gatewayModuleClient.SetDesiredPropertyUpdateCallbackAsync(OnDesiredPropertyChanged, gatewayModuleClient);
             await gatewayModuleClient.SetMethodDefaultHandlerAsync(OnNotImplementedMethod, gatewayModuleClient);
             await gatewayModuleClient.SetMethodHandlerAsync("UpdateRtcFromNtp", OnUpdateRtcFromNtp, gatewayModuleClient);
@@ -126,24 +133,38 @@ namespace GatewayModule
                 {
                     Console.WriteLine($"{DateTime.Now}> Error guardando configuración en Host -> {ex2.Message}");
                 }         
-            }            
+            }
 
             // Actualiza fecha y hora del RTC por NTP
 
-            var res = await GetNetworkTime();
-            if (res.Success)
+            try
             {
-                gwHardware.SetRtcDateTime(res.Value);
-                Console.WriteLine($"{DateTime.Now}> Fecha y Hora del RTC actualizada por NTP [{res.Value}].");
+                var res = await GetNetworkTime();
+                if (res.Success)
+                {
+                    gwHardware.SetRtcDateTime(res.Value);
+                    Console.WriteLine($"{DateTime.Now}> Fecha y Hora del RTC actualizada por NTP [{res.Value}].");
+                }
+                else
+                    Console.WriteLine($"{DateTime.Now}> Error actualizando RTC por NTP[{ res.Error}].");
             }
-            else
-                Console.WriteLine($"{DateTime.Now}> Error actualizando RTC por NTP[{ res.Error}].");
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{DateTime.Now}> Error obteniendo hora por NTP -> {ex.Message}.");
+            }
 
             // Obtiene el gemelo y sincroniza propiedades con deseadas del Hub
- 
-            var twin = await gatewayModuleClient.GetTwinAsync();
-            Console.WriteLine($"{DateTime.Now}> Propiedades deseadas descargadas desde el Hub.");
-            UpdateGatewayProperties(twin.Properties.Desired);
+
+            try
+            {
+                var twin = await gatewayModuleClient.GetTwinAsync();
+                Console.WriteLine($"{DateTime.Now}> Propiedades deseadas descargadas desde el Hub.");
+                UpdateGatewayProperties(twin.Properties.Desired);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{DateTime.Now}> Error descargando propiedades deseadas del Hub -> {ex.Message}.");
+            }
 
             // Actualiza propiedades reportadas
 
@@ -172,24 +193,36 @@ namespace GatewayModule
             gwProperties.PollDataChanged += GwProperties_PollDataChanged;
         }
 
-        private static void GwProperties_PollDataChanged(object sender, EventArgs e)
+        // ENCUESTA Y TELEMETRIA DE DATOS
+
+        private static void TimerPollData_Elapsed(object sender, EventArgs e)
         {
-            Console.WriteLine($"{DateTime.Now}> Propiedad PollData modificada.");
-            
-            // Detiene la encuesta
+            // Obtiene los datos del gateway
+            GatewayData gd = GetGatewayData();
 
-            timerPollData.Stop();
-
-            if (gwProperties.PollData.Enabled)
-            {
-                timerPollData.Start(gwProperties.PollData.Period, gwProperties.PollData.Unit);
-                Console.WriteLine($"{DateTime.Now}> Nueva ejecucion telemetria datos: {timerPollData.FirstExcecution} / Periodo: {timerPollData.PeriodMs} ms");
-            }
-            else
-                Console.WriteLine($"{DateTime.Now}> Telemetria datos deshabilitada.");
+            // Envia la telemetria
+            _ = SendTelemetryMessage(gd);
         }
 
-        private static void Gateway_UserButtonPushed(object sender, EventArgs e)
+        // TAREA STATUS
+
+        private static async void ThreadBodyStatusLed(object userContext)
+        {
+            while (true)
+            {
+                // turn on the LED
+                gwHardware.SetStatusLed(LedState.On);
+                await Task.Delay(statusLedOnMs);
+
+                // turn off the LED
+                gwHardware.SetStatusLed(LedState.Off);
+                await Task.Delay(statusLedPeriodMs);
+            }
+        }
+
+        // EVENTOS DE HARDWARE
+
+        private static void GwHardware_UserButtonPushed(object sender, EventArgs e)
         {
             // Loggea en consola el boton pulsado
             Console.WriteLine($"{DateTime.Now}> User Button presionado.");
@@ -207,6 +240,27 @@ namespace GatewayModule
             _ = SendEventMessage(gevt);
         }
 
+        // EVENTOS DE CAMBIO DE PROPIEDADES
+
+        private static void GwProperties_PollDataChanged(object sender, EventArgs e)
+        {
+            Console.WriteLine($"{DateTime.Now}> Propiedad PollData modificada.");
+
+            // Detiene la encuesta
+
+            timerPollData.Stop();
+
+            if (gwProperties.PollData.Enabled)
+            {
+                timerPollData.Start(gwProperties.PollData.Period, gwProperties.PollData.Unit);
+                Console.WriteLine($"{DateTime.Now}> Nueva ejecucion telemetria datos: {timerPollData.FirstExcecution} / Periodo: {timerPollData.PeriodMs} ms");
+            }
+            else
+                Console.WriteLine($"{DateTime.Now}> Telemetria datos deshabilitada.");
+        }
+
+        // EVENTOS DEL MODULO
+
         private static async Task OnDesiredPropertyChanged(TwinCollection desiredProperties, object userContext)
         {
             Console.WriteLine($"{DateTime.Now}> Actualizacion de propiedades deseadas recibida.");
@@ -218,21 +272,6 @@ namespace GatewayModule
             await SendReportedProperties(gwProperties);
 
             Console.WriteLine($"{DateTime.Now}> Actualizacion de propiedades reportadas enviada.");
-        }
-
-        private static async void ThreadBodyStatusLed(object userContext)
-        {
-            while (true)
-            {
-                // turn on the LED
-                gwHardware.SetStatusLed(LedState.On);
-                await Task.Delay(statusLedOnMs);
-
-                // turn off the LED
-                gwHardware.SetStatusLed(LedState.Off);
-                await Task.Delay(statusLedPeriodMs);
-            }
-            
         }
 
         /// <summary>
@@ -250,9 +289,12 @@ namespace GatewayModule
 
             byte[] messageBytes = message.GetBytes();
             string messageString = Encoding.UTF8.GetString(messageBytes);
-            
+
             return Task.FromResult(MessageResponse.Completed);
         }
+
+
+        
 
         public static async Task<Result<DateTime>> GetNetworkTime()
         {
@@ -339,12 +381,19 @@ namespace GatewayModule
             try
             {
                 GatewayDataPollConfiguration gpdc = GatewayDataPollConfiguration.FromJsonString(desiredProp["PollData"].ToString());
-                gwProperties.PollData = gpdc;
+                gwProperties.PollData = gpdc;     
+            }
+            catch (ArgumentException ex)
+            {
+                Console.WriteLine($"{DateTime.Now}> No hay configuracion para Poll Data -> {ex.Message}");
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"{DateTime.Now}> Error en configuracion de Poll Data (Ingnorando cambios) -> {ex.Message}");
-            }                        
+            }
+
+            // Guarda las propiedades en archivo de configuraion
+            gwProperties.ToJsonFile(configFolder + "config.json");
         }
 
         static GatewayData GetGatewayData()
@@ -471,17 +520,6 @@ namespace GatewayModule
             return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(gd.ToJsonString()), 200));
         }
 
-        // ENCUESTA Y TELEMETRIA DE DATOS
-
-        private static void TimerPollData_Elapsed(object sender, EventArgs e)
-        {
-            // Obtiene los datos del gateway
-
-            GatewayData gd = GetGatewayData();
-
-            // Envia la telemetria
-
-            _ = SendTelemetryMessage(gd);            
-        }
+        
     }
 }
