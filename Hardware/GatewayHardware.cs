@@ -209,7 +209,7 @@ namespace Hardware
 
         public float GetPowerVoltage()
         {
-            return (Single)(12.0 + rndGenerator.NextDouble());
+            return (Single)(11.0 + 5 * rndGenerator.NextDouble());
         }
 
         public float GetSensedVoltage()

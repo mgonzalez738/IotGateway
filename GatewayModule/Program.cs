@@ -77,7 +77,6 @@ namespace GatewayModule
             gwHardware = new GatewayRPI3Plus();
             //gwHardware = new GatewayRPI4();
             gwHardware.UserButtonPushed += GwHardware_UserButtonPushed;
-
             
             // Crea una conexion al runtime Edge
 
@@ -400,14 +399,13 @@ namespace GatewayModule
         static GatewayData GetGatewayData()
         {
             // Adquiere datos del gateway
-            GatewayData gd = new GatewayData
-            {               
-                UtcTime = DateTime.UtcNow,
-                PowerVoltage = gwHardware.GetPowerVoltage(),
-                SensedVoltage = gwHardware.GetSensedVoltage(),
-                BatteryVoltage = gwHardware.GetBatteryVoltage(),
-                Temperature = gwHardware.GetRtcTemperature()
-            };
+            GatewayData gd = new GatewayData();
+
+            gd.UtcTime = DateTime.UtcNow;
+            gd.PowerVoltage.Value = gwHardware.GetPowerVoltage();
+            gd.SensedVoltage.Value = gwHardware.GetSensedVoltage();
+            gd.BatteryVoltage.Value = gwHardware.GetBatteryVoltage();
+            gd.Temperature.Value = gwHardware.GetRtcTemperature();
 
             return gd;
         }
@@ -422,6 +420,9 @@ namespace GatewayModule
 
             // Loggea el envio en consola
             Console.WriteLine($"{DateTime.Now}> Envio Telemetria: {gd.ToJsonString()}");
+
+            // Prueba estados
+            Console.WriteLine($"{DateTime.Now}> Power Voltage State: {gd.PowerVoltage.State.ToString()}");
         }
 
         private static async Task SendEventMessage(GatewayEvent gevt)
