@@ -13,7 +13,9 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TplResult", "..\TplResult\T
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Hardware", "..\Hardware\Hardware.csproj", "{6574E0B9-D91C-4712-A730-B49A4CA8096A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Common", "..\Common\Common.csproj", "{644D9195-A9AE-4E9E-AFB7-E4F002ACF4BF}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Common", "..\Common\Common.csproj", "{644D9195-A9AE-4E9E-AFB7-E4F002ACF4BF}"
+EndProject
+Project("{9092AA53-FB77-4645-B42D-1CCCA6BD08BD}") = "ServerTelemetria", "..\TestServerTelemetria\ServerTelemetria.njsproj", "{532903CA-E4CC-44A8-9CE9-C18BE64AC588}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -45,6 +47,10 @@ Global
 		{644D9195-A9AE-4E9E-AFB7-E4F002ACF4BF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{644D9195-A9AE-4E9E-AFB7-E4F002ACF4BF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{644D9195-A9AE-4E9E-AFB7-E4F002ACF4BF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{532903CA-E4CC-44A8-9CE9-C18BE64AC588}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{532903CA-E4CC-44A8-9CE9-C18BE64AC588}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{532903CA-E4CC-44A8-9CE9-C18BE64AC588}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{532903CA-E4CC-44A8-9CE9-C18BE64AC588}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -34,6 +34,7 @@ namespace GatewayModule
         private static String configFolder;
 
         private static GatewayProperties gwProperties;
+        private static GatewayData gwData;
 
         static int statusLedPeriodMs = 1000;
         static int statusLedOnMs = 200;
@@ -135,6 +136,20 @@ namespace GatewayModule
                 }         
             }
 
+            // Crea los datos del gateway
+
+            gwData = new GatewayData();
+            gwData.PowerVoltage.Config.LimitHighHigh = 15;
+            gwData.PowerVoltage.Config.LimitHigh = 14;
+            gwData.PowerVoltage.Config.LimitLow = 13;
+            gwData.PowerVoltage.Config.LimitLowLow = 12;
+            gwData.PowerVoltage.Config.EnableHighHigh = true;
+            gwData.PowerVoltage.Config.EnableHigh = true;
+            gwData.PowerVoltage.Config.EnableLow = true;
+            gwData.PowerVoltage.Config.EnableLowLow = true;
+
+            gwData.StateChanged += Gd_StateChanged;
+
             // Actualiza fecha y hora del RTC por NTP
 
             try
@@ -198,10 +213,10 @@ namespace GatewayModule
         private static void TimerPollData_Elapsed(object sender, EventArgs e)
         {
             // Obtiene los datos del gateway
-            GatewayData gd = GetGatewayData();
+            GetGatewayData();
 
             // Envia la telemetria
-            _ = SendTelemetryMessage(gd);
+            _ = SendTelemetryMessage();
         }
 
         // TAREA STATUS
@@ -396,33 +411,36 @@ namespace GatewayModule
             gwProperties.ToJsonFile(configFolder + "config.json");
         }
 
-        static GatewayData GetGatewayData()
+        static void GetGatewayData()
         {
             // Adquiere datos del gateway
-            GatewayData gd = new GatewayData();
-
-            gd.UtcTime = DateTime.UtcNow;
-            gd.PowerVoltage.Value = gwHardware.GetPowerVoltage();
-            gd.SensedVoltage.Value = gwHardware.GetSensedVoltage();
-            gd.BatteryVoltage.Value = gwHardware.GetBatteryVoltage();
-            gd.Temperature.Value = gwHardware.GetRtcTemperature();
-
-            return gd;
+            
+            gwData.UtcTime = DateTime.UtcNow;
+            gwData.PowerVoltage.Value = gwHardware.GetPowerVoltage();
+            gwData.SensedVoltage.Value = gwHardware.GetSensedVoltage();
+            gwData.BatteryVoltage.Value = gwHardware.GetBatteryVoltage();
+            gwData.Temperature.Value = gwHardware.GetRtcTemperature();           
         }
-        private static async Task SendTelemetryMessage(GatewayData gd)
+
+        private static void Gd_StateChanged(object sender, StateChangeEventArgs e)
+        {
+            Console.WriteLine($"{DateTime.Now}> Evento: {e.PreviousState} -> {e.ActualState} ({((AnalogValue)sender).Value})");
+        }
+
+        private static async Task SendTelemetryMessage()
         {
             // Crea el mensaje a partir de los datos del gateway
-            Message msg = new Message(Encoding.UTF8.GetBytes(gd.ToJsonString()));
+            Message msg = new Message(Encoding.UTF8.GetBytes(gwData.ToJsonString()));
 
             // Agrega propiedad identificando al mensaje como de Telemetria
             msg.Properties.Add("Type", GatewayMessageType.Telemetry.ToString());
             await gatewayModuleClient.SendEventAsync("output1", msg);
 
             // Loggea el envio en consola
-            Console.WriteLine($"{DateTime.Now}> Envio Telemetria: {gd.ToJsonString()}");
+            Console.WriteLine($"{DateTime.Now}> Envio Telemetria: {gwData.ToJsonString()}");
 
             // Prueba estados
-            Console.WriteLine($"{DateTime.Now}> Power Voltage State: {gd.PowerVoltage.State.ToString()}");
+            Console.WriteLine($"{DateTime.Now}> Power Voltage State: {gwData.PowerVoltage.State.ToString()}");
         }
 
         private static async Task SendEventMessage(GatewayEvent gevt)
@@ -511,15 +529,15 @@ namespace GatewayModule
 
             // Obtiene los datos del gateway
 
-            GatewayData gd = GetGatewayData();
+            GetGatewayData();
 
             // Envia la telemetria
 
-            _ = SendTelemetryMessage(gd);
+            _ = SendTelemetryMessage();
 
             // Envia los datos como respuesta del metodo
 
-            return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(gd.ToJsonString()), 200));
+            return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(gwData.ToJsonString()), 200));
         }
 
         

@@ -154,7 +154,7 @@ namespace Hardware
         private AnalogValueConfiguration config;
         private AnalogValueState state;
 
-        public event EventHandler StateChanged;
+        public event EventHandler<StateChangeEventArgs> StateChanged;
 
         public AnalogValue()
         {
@@ -314,13 +314,30 @@ namespace Hardware
         private AnalogValue batteryVoltage;
         private AnalogValue temperature;
 
+        public event EventHandler<StateChangeEventArgs> StateChanged;
+
         public GatewayData()
         {
             utcTime = new DateTime();
+
             powerVoltage = new AnalogValue();
+            powerVoltage.StateChanged += AnalogValueStateChanged;
             sensedVoltage = new AnalogValue();
+            sensedVoltage.StateChanged += AnalogValueStateChanged;
             batteryVoltage = new AnalogValue();
+            batteryVoltage.StateChanged += AnalogValueStateChanged;
             temperature = new AnalogValue();
+            temperature.StateChanged += AnalogValueStateChanged;
+        }
+
+        private void AnalogValueStateChanged(object sender, StateChangeEventArgs e)
+        {
+            OnStateChanged(sender, e);
+        }
+
+        protected virtual void OnStateChanged(object sender, StateChangeEventArgs e)
+        {
+            StateChanged?.Invoke(sender, e);
         }
 
         public string ToJsonString()
