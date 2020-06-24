@@ -136,19 +136,15 @@ namespace GatewayModule
                 }         
             }
 
-            // Crea los datos del gateway
+            // Crea los datos del gateway y carga la configuracion de variables
 
             gwData = new GatewayData();
-            gwData.PowerVoltage.Config.LimitHighHigh = 15;
-            gwData.PowerVoltage.Config.LimitHigh = 14;
-            gwData.PowerVoltage.Config.LimitLow = 13;
-            gwData.PowerVoltage.Config.LimitLowLow = 12;
-            gwData.PowerVoltage.Config.EnableHighHigh = true;
-            gwData.PowerVoltage.Config.EnableHigh = true;
-            gwData.PowerVoltage.Config.EnableLow = true;
-            gwData.PowerVoltage.Config.EnableLowLow = true;
+            gwData.PowerVoltage.Config = gwProperties.Variable.PowerVoltage;
+            gwData.SensedVoltage.Config = gwProperties.Variable.SensedVoltage;
+            gwData.BatteryVoltage.Config = gwProperties.Variable.BatteryVoltage;
+            gwData.Temperature.Config = gwProperties.Variable.Temperature;
 
-            gwData.StateChanged += Gd_StateChanged;
+            gwData.StateChanged += gwData_VarableStateChanged;
 
             // Actualiza fecha y hora del RTC por NTP
 
@@ -422,9 +418,14 @@ namespace GatewayModule
             gwData.Temperature.Value = gwHardware.GetRtcTemperature();           
         }
 
-        private static void Gd_StateChanged(object sender, StateChangeEventArgs e)
+        private static void gwData_VarableStateChanged(object sender, StateChangeEventArgs e)
         {
-            Console.WriteLine($"{DateTime.Now}> Evento: {e.PreviousState} -> {e.ActualState} ({((AnalogValue)sender).Value})");
+            AnalogValue val = (AnalogValue)sender;
+            GatewayEvent gevt = new GatewayEvent();
+            gevt.UtcTime = DateTime.Now;
+            gevt.MessageType = GatewayEventType.Warning;
+            gevt.Message = $"Cambio de estado. {e.PropertyName} = {val.Value:0.000000} {val.Config.Unit} ({e.PreviousState} -> {e.ActualState}).";
+            _ = SendEventMessage(gevt);
         }
 
         private static async Task SendTelemetryMessage()
@@ -438,9 +439,6 @@ namespace GatewayModule
 
             // Loggea el envio en consola
             Console.WriteLine($"{DateTime.Now}> Envio Telemetria: {gwData.ToJsonString()}");
-
-            // Prueba estados
-            Console.WriteLine($"{DateTime.Now}> Power Voltage State: {gwData.PowerVoltage.State.ToString()}");
         }
 
         private static async Task SendEventMessage(GatewayEvent gevt)

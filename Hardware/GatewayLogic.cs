@@ -11,16 +11,78 @@ using static Common.ScheduleTimer;
 
 namespace Hardware
 {
+    #region ENUMERACIONES
+
     public enum GatewayMessageType { Telemetry, Event }
 
-    public enum GatewayEventType { Info, Error, Debug }
+    public enum GatewayEventType { Info, Warning, Error, Debug }
 
     public enum AnalogValueState { Normal, HighHigh, High, Low, LowLow }
 
-    // VARIABLES
+    #endregion
+
+    #region UNIDADES
+
+    public static class UnitsVoltage
+    {
+        public static String Volts { get { return "V"; } }
+        public static String MiliVolts { get { return "mV"; } }
+    }
+
+    public static class UnitsTemperature
+    {
+        public static String Celsius { get { return "°C"; } }
+    }
+
+
+    #endregion
+
+    #region ARGUMENTOS EVENTO
+
+    public class StateChangeEventArgs : EventArgs
+    {
+        private string propertyName;
+        private AnalogValueState previousState;
+        private AnalogValueState actualState;
+
+        public StateChangeEventArgs(AnalogValueState previous, AnalogValueState actual)
+        {
+            propertyName = "";
+            previousState = previous;
+            actualState = actual;
+        }
+
+        public StateChangeEventArgs(AnalogValueState previous, AnalogValueState actual, string propName)
+        {
+            propertyName = propName;
+            previousState = previous;
+            actualState = actual;
+        }
+
+        public AnalogValueState PreviousState
+        {
+            get { return previousState; }
+        }
+
+        public AnalogValueState ActualState
+        {
+            get { return actualState; }
+        }
+
+        public String PropertyName
+        {
+            get { return propertyName; }
+            set { propertyName = value; }
+        }
+    }
+
+    #endregion
+
+    // VALORES
 
     public class AnalogValueConfiguration
     {
+        private string unit;
         private double limitHighHigh;
         private double limitHigh;
         private double limitLow;
@@ -31,8 +93,9 @@ namespace Hardware
         private bool enableLow;
         private bool enableLowLow;
 
-        public AnalogValueConfiguration()
+        public AnalogValueConfiguration(string valueUnit)
         {
+            unit = valueUnit;
             limitHighHigh = 0.0;
             limitHigh = 0.0;
             limitLow = 0.0;
@@ -123,27 +186,10 @@ namespace Hardware
             get { return enableLowLow; }
             set { enableLowLow = value; }
         }
-    }
-
-    public class StateChangeEventArgs : EventArgs
-    {
-        private AnalogValueState previousState;
-        private AnalogValueState actualState;
-
-        public StateChangeEventArgs(AnalogValueState previous, AnalogValueState actual)
+        [JsonProperty(Required = Required.Always)]
+        public String Unit
         {
-            previousState = previous;
-            actualState = actual;
-        }
-
-        public AnalogValueState PreviousState
-        {
-            get { return previousState; }
-        }
-
-        public AnalogValueState ActualState
-        {
-            get { return actualState; }
+            get { return unit; }
         }
     }
 
@@ -156,10 +202,10 @@ namespace Hardware
 
         public event EventHandler<StateChangeEventArgs> StateChanged;
 
-        public AnalogValue()
+        public AnalogValue(string valueUnit)
         {
             value = Double.NaN;
-            config = new AnalogValueConfiguration();
+            config = new AnalogValueConfiguration(valueUnit);
             state = AnalogValueState.Normal;
         }
 
@@ -295,6 +341,7 @@ namespace Hardware
         public AnalogValueConfiguration Config
         {
             get { return this.config; }
+            set { this.config = value; }
         }
 
         public AnalogValueState State
@@ -320,19 +367,38 @@ namespace Hardware
         {
             utcTime = new DateTime();
 
-            powerVoltage = new AnalogValue();
-            powerVoltage.StateChanged += AnalogValueStateChanged;
-            sensedVoltage = new AnalogValue();
-            sensedVoltage.StateChanged += AnalogValueStateChanged;
-            batteryVoltage = new AnalogValue();
-            batteryVoltage.StateChanged += AnalogValueStateChanged;
-            temperature = new AnalogValue();
-            temperature.StateChanged += AnalogValueStateChanged;
+            powerVoltage = new AnalogValue(UnitsVoltage.Volts);
+            powerVoltage.StateChanged += PowerVoltage_StateChanged;
+            sensedVoltage = new AnalogValue(UnitsVoltage.Volts);
+            sensedVoltage.StateChanged += SensedVoltage_StateChanged; 
+            batteryVoltage = new AnalogValue(UnitsVoltage.Volts);
+            batteryVoltage.StateChanged += BatteryVoltage_StateChanged; 
+            temperature = new AnalogValue(UnitsTemperature.Celsius);
+            temperature.StateChanged += Temperature_StateChanged; 
         }
 
-        private void AnalogValueStateChanged(object sender, StateChangeEventArgs e)
+        private void PowerVoltage_StateChanged(object sender, StateChangeEventArgs e)
         {
-            OnStateChanged(sender, e);
+            e.PropertyName = "PowerVoltage";
+            OnStateChanged(this.PowerVoltage, e);
+        }
+
+        private void SensedVoltage_StateChanged(object sender, StateChangeEventArgs e)
+        {
+            e.PropertyName = "SensedVoltage";
+            OnStateChanged(this.SensedVoltage, e);
+        }
+
+        private void BatteryVoltage_StateChanged(object sender, StateChangeEventArgs e)
+        {
+            e.PropertyName = "BatteryVoltage";
+            OnStateChanged(this.BatteryVoltage, e);
+        }
+
+        private void Temperature_StateChanged(object sender, StateChangeEventArgs e)
+        {
+            e.PropertyName = "Temperature";
+            OnStateChanged(this.Temperature, e);
         }
 
         protected virtual void OnStateChanged(object sender, StateChangeEventArgs e)
@@ -377,7 +443,7 @@ namespace Hardware
         }
     }
 
-    // EVENTOS
+    // EVENTOS GATEWAY
 
     public class GatewayEvent
     {
@@ -419,6 +485,68 @@ namespace Hardware
     }
 
     // CONFIGURACION
+
+    public class GatewayVariableConfiguration
+    {
+        private AnalogValueConfiguration powerVoltage;
+        private AnalogValueConfiguration sensedVoltage;
+        private AnalogValueConfiguration batteryVoltage;
+        private AnalogValueConfiguration temperature;
+
+
+        public GatewayVariableConfiguration()
+        {
+            powerVoltage = new AnalogValueConfiguration(UnitsVoltage.Volts);
+            sensedVoltage = new AnalogValueConfiguration(UnitsVoltage.Volts);
+            batteryVoltage = new AnalogValueConfiguration(UnitsVoltage.Volts);
+            temperature = new AnalogValueConfiguration(UnitsTemperature.Celsius);
+        }
+
+        public static GatewayVariableConfiguration FromJsonString(string st)
+        {
+            try
+            {
+                return JsonConvert.DeserializeObject<GatewayVariableConfiguration>(st, new JsonSerializerSettings { MissingMemberHandling = MissingMemberHandling.Error });
+            }
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+        }
+
+        public string ToJsonString()
+        {
+            return JsonConvert.SerializeObject(this, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include, FloatFormatHandling = FloatFormatHandling.String });
+        }
+
+        [JsonProperty(Required = Required.Always)]
+        public AnalogValueConfiguration PowerVoltage
+        {
+            get { return powerVoltage; }
+            set { powerVoltage= value; }
+        }
+
+        [JsonProperty(Required = Required.Always)]
+        public AnalogValueConfiguration SensedVoltage
+        {
+            get { return sensedVoltage; }
+            set { sensedVoltage = value; }
+        }
+
+        [JsonProperty(Required = Required.Always)]
+        public AnalogValueConfiguration BatteryVoltage
+        {
+            get { return batteryVoltage; }
+            set { batteryVoltage = value; }
+        }
+
+        [JsonProperty(Required = Required.Always)]
+        public AnalogValueConfiguration Temperature
+        {
+            get { return temperature; }
+            set { temperature = value; }
+        }
+    }
 
     public class GatewayDataPollConfiguration
     {
@@ -476,12 +604,14 @@ namespace Hardware
     public class GatewayProperties
     {
         private GatewayDataPollConfiguration pollData;
+        private GatewayVariableConfiguration variable;
 
         public event EventHandler PollDataChanged;
 
         public GatewayProperties()
         {
             pollData = new GatewayDataPollConfiguration();
+            variable = new GatewayVariableConfiguration();
         }
 
         public string ToJsonString()
@@ -534,12 +664,17 @@ namespace Hardware
             }
         }
 
+        public GatewayVariableConfiguration Variable
+        {
+            get { return variable; }
+            set { variable = value; }
+        }
+
     }
 
     // SERIALIZADORES JSON
 
     // Serializa a Json solo el miembro Value del objeto AnalogValue
-    // No deserializa
     public class AnalogValueJsonConverter : JsonConverter<AnalogValue>
     {
         public override AnalogValue ReadJson(JsonReader reader, Type objectType, [AllowNull] AnalogValue existingValue, bool hasExistingValue, Newtonsoft.Json.JsonSerializer serializer)
