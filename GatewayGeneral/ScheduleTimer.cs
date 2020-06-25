@@ -5,13 +5,13 @@ using System.Threading.Tasks;
 using System.Timers;
 using Timer = System.Timers.Timer;
 
-namespace Common
+namespace GatewayGeneral
 {
+    public enum ScheduleUnit { second, minute, hour, day };
+    public enum ScheduleState { stopped, waiting, running };
+
     public class ScheduleTimer
     {
-        public enum ScheduleUnit { second, minute, hour, day };
-        public enum ScheduleState { stopped, waiting, running };
-
         public event EventHandler Elapsed;
 
         private int periodMs;

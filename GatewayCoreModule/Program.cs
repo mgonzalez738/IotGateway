@@ -1,4 +1,4 @@
-namespace GatewayModule
+namespace GatewayCoreModule
 {
     using System;
     using System.IO;
@@ -19,7 +19,7 @@ namespace GatewayModule
     using Hardware;
     using TplSockets;
     using TplResult;
-    using Common;
+    using GatewayGeneral;
     using System.Runtime.Intrinsics.X86;
     using Newtonsoft.Json.Linq;
     using System.Linq;

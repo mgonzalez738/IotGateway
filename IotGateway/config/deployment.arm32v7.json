@@ -36,7 +36,7 @@
           }
         },
         "modules": {
-          "GatewayModule": {
+          "GatewayCore": {
             "version": "1.0.0",
             "type": "docker",
             "env": {
@@ -50,8 +50,8 @@
             "status": "running",
             "restartPolicy": "always",
             "settings": {
-              "image": "mgonzalez738/gatewaymodule:0.0.2-arm32v7",
-              "createOptions": "{\"HostConfig\":{\"Binds\":[\"/etc/iotedge/GatewayModule/storage/:/storage/\",\"/etc/iotedge/GatewayModule/config/:/config/\"],\"Privileged\":true,\"ExposedPorts\":{\"22/tcp\":{}},\"PortBindings\":{\"22/tcp\":[{\"HostPort\":\"22\"}]}}}"
+              "image": "mgonzalez738/gatewaycoremodule:0.0.2-arm32v7",
+              "createOptions": "{\"HostConfig\":{\"Binds\":[\"/etc/iotedge/GatewayCoreModule/storage/:/storage/\",\"/etc/iotedge/GatewayCoreModule/config/:/config/\"],\"Privileged\":true,\"ExposedPorts\":{\"22/tcp\":{}},\"PortBindings\":{\"22/tcp\":[{\"HostPort\":\"22\"}]}}}"
             }
           }
         }
@@ -61,7 +61,7 @@
       "properties.desired": {
         "schemaVersion": "1.0",
         "routes": {
-          "GatewayModuleToIoTHub": "FROM /messages/modules/GatewayModule/outputs/* INTO $upstream"
+          "GatewayCoreModuleToIoTHub": "FROM /messages/modules/GatewayCoreModule/outputs/* INTO $upstream"
         },
         "storeAndForwardConfiguration": {
           "timeToLiveSecs": 7200

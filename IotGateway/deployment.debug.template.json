@@ -57,13 +57,13 @@
           }
         },
         "modules": {
-          "GatewayModule": {
+          "GatewayCore": {
             "version": "1.0.0",
             "type": "docker",
             "status": "running",
             "restartPolicy": "always",
             "settings": {
-              "image": "${MODULEDIR<../GatewayModule>.debug}",
+              "image": "${MODULEDIR<../GatewayCoreModule>.debug}",
               "createOptions": {
                 "HostConfig": {
                   "Privileged": true,
@@ -88,7 +88,7 @@
       "properties.desired": {
         "schemaVersion": "1.0",
         "routes": {
-          "GatewayModuleToIoTHub": "FROM /messages/modules/GatewayModule/outputs/* INTO $upstream"
+          "GatewayCoreToIoTHub": "FROM /messages/modules/GatewayCoreModule/outputs/* INTO $upstream"
         },
         "storeAndForwardConfiguration": {
           "timeToLiveSecs": 7200
