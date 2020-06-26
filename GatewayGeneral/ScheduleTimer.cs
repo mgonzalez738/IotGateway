@@ -26,7 +26,6 @@ namespace GatewayGeneral
             timer.AutoReset = true;
             timer.Elapsed += Timer_Elapsed;
             state = ScheduleState.stopped;
-            tokenSource = new CancellationTokenSource();
         }
 
         private async Task start(int period, ScheduleUnit unit, CancellationToken token)
@@ -65,20 +64,25 @@ namespace GatewayGeneral
 
             // Espera se cumpla el periodo o se cancele el timer
 
-            await Task.Delay(firstExecution.Subtract(timeNow), token);
-
-            // Arranca el timer si no se pidio la cancelacion y ejecuta la primera vez el evento
-
-            if (!token.IsCancellationRequested)
+            try
             {
-                state = ScheduleState.running;
-                timer.Start();
-                Timer_Elapsed(this, null);
+                await Task.Delay(firstExecution.Subtract(timeNow), token);
             }
+            catch
+            {
+                return;
+            }
+
+            // Arranca el timer si no se cancelo y ejecuta la primera vez el evento
+
+             state = ScheduleState.running;
+            timer.Start();
+            Timer_Elapsed(this, null);        
         }
 
         public void Start(int period, ScheduleUnit unit)
         {
+            tokenSource = new CancellationTokenSource();
             _ = start(period, unit, tokenSource.Token);
         }
 

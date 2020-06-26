@@ -30,8 +30,9 @@ namespace GatewayCoreModule
         private static IGatewayHardware gwHardware;
         private static ModuleClient gatewayModuleClient;
         private static ScheduleTimer timerPollData;
-        private static String storageFolder;
-        private static String configFolder;
+        private static ScheduleTimer timerSendData;
+        private static string storageFolder;
+        private static string configFolder;
 
         private static GatewayProperties gwProperties;
         private static GatewayData gwData;
@@ -187,21 +188,39 @@ namespace GatewayCoreModule
             var threadStatusLed = new Thread(() => ThreadBodyStatusLed(gatewayModuleClient));
             threadStatusLed.Start();
 
-            // Crea el timer de telemetria de datos del gateway y lo inicia si esta habilitado
+            // Crea los timer de encuesta y telemetria de datos del gateway
 
             timerPollData = new ScheduleTimer();
             timerPollData.Elapsed += TimerPollData_Elapsed;
+
+            timerSendData = new ScheduleTimer();
+            timerSendData.Elapsed += TimerSendData_Elapsed;
+
             if (gwProperties.PollData.Enabled)
             {
+                // Inicia el timer de encuesta de datos
                 timerPollData.Start(gwProperties.PollData.Period, gwProperties.PollData.Unit);
-                Console.WriteLine($"{DateTime.Now}> Primera ejecucion telemetria datos: {timerPollData.FirstExcecution} / Periodo: {timerPollData.PeriodMs} ms");
+                Console.WriteLine($"{DateTime.Now}> Primera ejecucion encuesta datos: {timerPollData.FirstExcecution} / Periodo: {timerPollData.PeriodMs} ms");             
+                if(gwProperties.DetachedTelemetry.Enabled)
+                {
+                    // Inicia el timer de telemetria de datos si esta desdoblado
+                    timerSendData.Start(gwProperties.DetachedTelemetry.Period, gwProperties.DetachedTelemetry.Unit);
+                    Console.WriteLine($"{DateTime.Now}> Primera ejecucion telemetria datos: {timerSendData.FirstExcecution} / Periodo: {timerSendData.PeriodMs} ms");
+                }
+                else
+                {
+                    Console.WriteLine($"{DateTime.Now}> Telemetria de datos simultanea con encuesta.");
+                }
             }
             else
-                Console.WriteLine($"{DateTime.Now}> Telemetria datos deshabilitada.");
+            {
+                Console.WriteLine($"{DateTime.Now}> Encuesta datos y telemetria deshabilitadas.");
+            }
 
             // Registra eventos de cambio de propiedades
 
             gwProperties.PollDataChanged += GwProperties_PollDataChanged;
+            gwProperties.DetachedTelemetryChanged += GwProperties_DetachedTelemetryChanged;
         }
 
         // ENCUESTA Y TELEMETRIA DE DATOS
@@ -211,6 +230,13 @@ namespace GatewayCoreModule
             // Obtiene los datos del gateway
             GetGatewayData();
 
+            // Envia la telemetria si no esta separada
+            if(!gwProperties.DetachedTelemetry.Enabled)
+                _ = SendTelemetryMessage();
+        }
+
+        private static void TimerSendData_Elapsed(object sender, EventArgs e)
+        {
             // Envia la telemetria
             _ = SendTelemetryMessage();
         }
@@ -264,10 +290,30 @@ namespace GatewayCoreModule
             if (gwProperties.PollData.Enabled)
             {
                 timerPollData.Start(gwProperties.PollData.Period, gwProperties.PollData.Unit);
-                Console.WriteLine($"{DateTime.Now}> Nueva ejecucion telemetria datos: {timerPollData.FirstExcecution} / Periodo: {timerPollData.PeriodMs} ms");
+                Console.WriteLine($"{DateTime.Now}> Proxima ejecucion encuesta datos: {timerPollData.FirstExcecution} / Periodo: {timerPollData.PeriodMs} ms");
             }
             else
-                Console.WriteLine($"{DateTime.Now}> Telemetria datos deshabilitada.");
+            {
+                timerSendData.Stop();
+                Console.WriteLine($"{DateTime.Now}> Encuesta datos y telemetria datos deshabilitadas.");
+            }
+        }
+
+        private static void GwProperties_DetachedTelemetryChanged(object sender, EventArgs e)
+        {
+            Console.WriteLine($"{DateTime.Now}> Propiedad DetachedTelemetry modificada.");
+
+            // Detiene la telemetria
+
+            timerSendData.Stop();
+
+            if (gwProperties.DetachedTelemetry.Enabled)
+            {
+                timerSendData.Start(gwProperties.DetachedTelemetry.Period, gwProperties.DetachedTelemetry.Unit);
+                Console.WriteLine($"{DateTime.Now}> Proxima ejecucion telemetria datos: {timerSendData.FirstExcecution} / Periodo: {timerSendData.PeriodMs} ms");
+            }
+            else
+                Console.WriteLine($"{DateTime.Now}> Telemetria de datos simultanea con encuesta.");
         }
 
         // EVENTOS DEL MODULO
@@ -403,6 +449,21 @@ namespace GatewayCoreModule
                 Console.WriteLine($"{DateTime.Now}> Error en configuracion de Poll Data (Ingnorando cambios) -> {ex.Message}");
             }
 
+            // Detached Telemetry
+            try
+            {
+                GatewayDetachedTelemetryConfiguration gdtc = GatewayDetachedTelemetryConfiguration.FromJsonString(desiredProp["DetachedTelemetry"].ToString());
+                gwProperties.DetachedTelemetry = gdtc;
+            }
+            catch (ArgumentException ex)
+            {
+                Console.WriteLine($"{DateTime.Now}> No hay configuracion para DetachedTelemetry -> {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{DateTime.Now}> Error en configuracion de DetachedTelemetry (Ingnorando cambios) -> {ex.Message}");
+            }
+
             // Guarda las propiedades en archivo de configuraion
             gwProperties.ToJsonFile(configFolder + "config.json");
         }
@@ -415,7 +476,12 @@ namespace GatewayCoreModule
             gwData.PowerVoltage.Value = gwHardware.GetPowerVoltage();
             gwData.SensedVoltage.Value = gwHardware.GetSensedVoltage();
             gwData.BatteryVoltage.Value = gwHardware.GetBatteryVoltage();
-            gwData.Temperature.Value = gwHardware.GetRtcTemperature();           
+            gwData.Temperature.Value = gwHardware.GetRtcTemperature();
+            Console.Write($"{DateTime.Now}> Encuesta datos: ");
+            Console.Write($"PowerVoltage = {gwData.PowerVoltage.Value:0.000000} {gwData.PowerVoltage.Config.Unit} | ");
+            Console.Write($"SensedVoltage = {gwData.SensedVoltage.Value:0.000000} {gwData.SensedVoltage.Config.Unit} | ");
+            Console.Write($"BatteryVoltage = {gwData.BatteryVoltage.Value:0.000000} {gwData.BatteryVoltage.Config.Unit} | ");
+            Console.WriteLine($"Temperature = {gwData.Temperature.Value:0.000000} {gwData.Temperature.Config.Unit}.");
         }
 
         private static void gwData_VarableStateChanged(object sender, StateChangeEventArgs e)
