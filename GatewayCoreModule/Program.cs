@@ -96,15 +96,7 @@ namespace GatewayCoreModule
             // Inicia el modulo
 
             await gatewayModuleClient.OpenAsync();
-            Console.WriteLine($"{DateTime.Now}> Modulo Gateway inicializado.");
-
-            // Envia el evento de reinicio al Hub
-
-            GatewayEvent gevt = new GatewayEvent();
-            gevt.UtcTime = DateTime.Now;
-            gevt.MessageType = GatewayEventType.Info;
-            gevt.Message = "Gateway Reiniciado";
-            _ = SendEventMessage(gevt);
+            Console.WriteLine($"{DateTime.Now}> Modulo Gateway inicializado.");           
 
             // Obtiene el path a las carpetas en el host
 
@@ -137,6 +129,24 @@ namespace GatewayCoreModule
                 }         
             }
 
+ /*           // Prueba datos inc
+
+            InclinometerChainData inc = new InclinometerChainData(12);
+            int i;
+            Random rnd = new Random();
+            inc.UtcTime = DateTime.Now;
+            for (i = 0; i < inc.Nodes.Count; i++)
+            {
+                inc.Nodes[i].Heigh.Value = 6+i*6;
+                inc.Nodes[i].TiltX.Value = 20 * (rnd.NextDouble() - 0.5);
+                inc.Nodes[i].TiltY.Value = 20 * (rnd.NextDouble() - 0.5);
+                inc.Nodes[i].Rotation.Value = 2 * (rnd.NextDouble() - 0.5);
+            }
+            inc.Wind.Speed.Value = 20 * rnd.NextDouble();
+            inc.Wind.Direction.Value = 20 * rnd.NextDouble();
+            inc.ToJsonFile(configFolder + "IncData.json");
+ */
+
             // Crea los datos del gateway y carga la configuracion de variables
 
             gwData = new GatewayData();
@@ -164,6 +174,14 @@ namespace GatewayCoreModule
             {
                 Console.WriteLine($"{DateTime.Now}> Error obteniendo hora por NTP -> {ex.Message}.");
             }
+
+            // Envia el evento de reinicio al Hub
+
+            GatewayEvent gevt = new GatewayEvent();
+            gevt.UtcTime = DateTime.Now;
+            gevt.MessageType = GatewayEventType.Info;
+            gevt.Message = "Gateway Reiniciado";
+            _ = SendEventMessage(gevt);
 
             // Obtiene el gemelo y sincroniza propiedades con deseadas del Hub
 
@@ -275,6 +293,8 @@ namespace GatewayCoreModule
                         
             // Envia el evento
             _ = SendEventMessage(gevt);
+
+            gevt.ToJsonFile(configFolder + "boton.json");
         }
 
         // EVENTOS DE CAMBIO DE PROPIEDADES
@@ -464,6 +484,18 @@ namespace GatewayCoreModule
                 Console.WriteLine($"{DateTime.Now}> Error en configuracion de DetachedTelemetry (Ingnorando cambios) -> {ex.Message}");
             }
 
+            // Device Tag
+            try
+            {
+                gwProperties.DeviceTag = desiredProp["DeviceTag"].ToString();
+                Console.WriteLine($"{DateTime.Now}> DeviveTag = {gwProperties.DeviceTag}");
+            }
+            catch (ArgumentException ex)
+            {
+                gwProperties.DeviceTag = "";
+                Console.WriteLine($"{DateTime.Now}> No hay configuracion para DeviceTag -> {ex.Message}");
+            }
+            
             // Guarda las propiedades en archivo de configuraion
             gwProperties.ToJsonFile(configFolder + "config.json");
         }
@@ -477,6 +509,8 @@ namespace GatewayCoreModule
             gwData.SensedVoltage.Value = gwHardware.GetSensedVoltage();
             gwData.BatteryVoltage.Value = gwHardware.GetBatteryVoltage();
             gwData.Temperature.Value = gwHardware.GetRtcTemperature();
+            gwData.Sent = false;
+            Console.ForegroundColor = ConsoleColor.Yellow;
             Console.Write($"{DateTime.Now}> Encuesta datos: ");
             Console.Write($"PowerVoltage = {gwData.PowerVoltage.Value:0.000000} {gwData.PowerVoltage.Config.Unit} | ");
             Console.Write($"SensedVoltage = {gwData.SensedVoltage.Value:0.000000} {gwData.SensedVoltage.Config.Unit} | ");
@@ -492,31 +526,51 @@ namespace GatewayCoreModule
             gevt.MessageType = GatewayEventType.Warning;
             gevt.Message = $"Cambio de estado. {e.PropertyName} = {val.Value:0.000000} {val.Config.Unit} ({e.PreviousState} -> {e.ActualState}).";
             _ = SendEventMessage(gevt);
+            _ = SendTelemetryMessage();
+
+            gevt.ToJsonFile(configFolder + "variable.json");
         }
 
         private static async Task SendTelemetryMessage()
         {
-            // Crea el mensaje a partir de los datos del gateway
-            Message msg = new Message(Encoding.UTF8.GetBytes(gwData.ToJsonString()));
+            // Verifica que los datos no hayan sido enviados aun
+            if (!gwData.Sent)
+            {
+                // Crea el mensaje a partir de los datos del gateway
+                Message msg = new Message(Encoding.UTF8.GetBytes(gwData.ToJsonString()));
+                msg.ContentEncoding = "utf-8";
+                msg.ContentType = "application/json";
 
-            // Agrega propiedad identificando al mensaje como de Telemetria
-            msg.Properties.Add("Type", GatewayMessageType.Telemetry.ToString());
-            await gatewayModuleClient.SendEventAsync("output1", msg);
+                // Agrega propiedad identificando al mensaje como de datos
+                msg.Properties.Add("MessageType", GatewayMessageType.Data.ToString());
+                msg.Properties.Add("DeviceTag", gwProperties.DeviceTag);
+                msg.Properties.Add("DeviceType", "Gateway");
 
-            // Loggea el envio en consola
-            Console.WriteLine($"{DateTime.Now}> Envio Telemetria: {gwData.ToJsonString()}");
+                // Marca los datos como enviados y los envia
+                gwData.Sent = true;
+                await gatewayModuleClient.SendEventAsync("output1", msg);
+
+                // Loggea el envio en consola
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"{DateTime.Now}> Envio Telemetria: {gwData.ToJsonString()}");
+            }
         }
 
         private static async Task SendEventMessage(GatewayEvent gevt)
         {
             // Crea el mensaje a partir del evento del gateway
             Message msg = new Message(Encoding.UTF8.GetBytes(gevt.ToJsonString()));
+            msg.ContentEncoding = "utf-8";
+            msg.ContentType = "application/json";
 
             // Agrega propiedad identificando al mensaje como Evento
-            msg.Properties.Add("Type", GatewayMessageType.Event.ToString());
+            msg.Properties.Add("MessageType", GatewayMessageType.Event.ToString());
+            msg.Properties.Add("DeviceTag", gwProperties.DeviceTag);
+            msg.Properties.Add("DeviceType", "Gateway");
             await gatewayModuleClient.SendEventAsync("output1", msg);
 
             // Loggea el envio en consola
+            Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine($"{DateTime.Now}> Envio Evento: {gevt.ToJsonString()}");
         }
 

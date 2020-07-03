@@ -14,4 +14,26 @@ namespace GatewayGeneral
     {
         public static String Celsius { get { return "°C"; } }
     }
+
+    public static class UnitsDistance
+    {
+        public static String Meters { get { return "m"; } }
+        public static String Millimeters { get { return "mm"; } }
+    }
+
+    public static class UnitsTilt
+    {
+        public static String MillimetersPerMeter { get { return "mm/m"; } }
+        public static String Degrees { get { return "°"; } }
+    }
+
+    public static class UnitsSpeed
+    {
+        public static String KilometerPerHour { get { return "Km/h"; } }
+    }
+
+    public static class UnitsAngle
+    {
+        public static String Degrees { get { return "°"; } }
+    }
 }

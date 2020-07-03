@@ -2,10 +2,140 @@
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace GatewayCoreModule
 {
-    public enum GatewayMessageType { Telemetry, Event }
+
+    public class InclinometerNodeData
+    {
+        private AnalogValue heigh;
+        private AnalogValue tiltX;    
+        private AnalogValue tiltY;
+        private AnalogValue rotation;
+
+        public InclinometerNodeData()
+        {
+            heigh = new AnalogValue(UnitsDistance.Meters);
+            tiltX = new AnalogValue(UnitsTilt.Degrees);
+            tiltY = new AnalogValue(UnitsTilt.Degrees);
+            rotation = new AnalogValue(UnitsAngle.Degrees);
+        }
+
+        public string ToJsonString()
+        {
+            string st = JsonConvert.SerializeObject(this, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include, FloatFormatHandling = FloatFormatHandling.String });
+            return st;
+        }
+
+        public AnalogValue Heigh
+        {
+            get { return heigh; }
+            set { heigh = value; }
+        }
+
+        public AnalogValue TiltX
+        {
+            get { return tiltX; }
+            set { tiltX = value; }
+        }
+
+        public AnalogValue TiltY
+        {
+            get { return tiltY; }
+            set { tiltY = value; }
+        }
+
+        public AnalogValue Rotation
+        {
+            get { return rotation; }
+            set { rotation = value; }
+        }
+    }
+
+    public class WindNodeData
+    {
+        private AnalogValue speed;
+        private AnalogValue direction;
+
+        public WindNodeData()
+        {
+            speed = new AnalogValue(UnitsSpeed.KilometerPerHour);
+            direction = new AnalogValue(UnitsAngle.Degrees);
+        }
+
+        public string ToJsonString()
+        {
+            string st = JsonConvert.SerializeObject(this, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include, FloatFormatHandling = FloatFormatHandling.String });
+            return st;
+        }
+
+        public AnalogValue Speed
+        {
+            get { return speed; }
+            set { speed = value; }
+        }
+
+        public AnalogValue Direction
+        {
+            get { return direction; }
+            set { direction = value; }
+        }
+    }
+
+    public class InclinometerChainData
+    {
+        private int nodesQuantity;
+        private DateTime utcTime;
+        private List<InclinometerNodeData> nodes;
+        private WindNodeData wind;
+
+        public InclinometerChainData(int nQty)
+        {
+            int i;
+            nodesQuantity = nQty;
+
+            utcTime = new DateTime();
+            nodes = new List<InclinometerNodeData>();
+            for(i=0; i<nodesQuantity; i++)
+                nodes.Add(new InclinometerNodeData());
+            wind = new WindNodeData();
+        }
+
+        public string ToJsonString()
+        {
+            string st = JsonConvert.SerializeObject(this, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include, FloatFormatHandling = FloatFormatHandling.String });
+            return st;
+        }
+
+        public void ToJsonFile(string filePath)
+        {
+            string st = JsonConvert.SerializeObject(this, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include, FloatFormatHandling = FloatFormatHandling.String, Formatting = Formatting.Indented });
+            File.WriteAllText(filePath, st);
+        }
+
+        public DateTime UtcTime
+        {
+            get { return utcTime; }
+            set { utcTime = RoundDateTime.RoundToSeconds(((DateTime)value).ToUniversalTime()); }
+        }
+
+        public List<InclinometerNodeData> Nodes
+        {
+            get { return nodes; }
+            set { nodes = value; }
+        }
+
+        public WindNodeData Wind
+        {
+            get { return wind; }
+            set { wind = value; }
+        }
+    }
+
+    public enum GatewayMessageType { Data, Event }
 
     public enum GatewayEventType { Info, Warning, Error, Debug }
 
@@ -16,6 +146,7 @@ namespace GatewayCoreModule
         private AnalogValue sensedVoltage;
         private AnalogValue batteryVoltage;
         private AnalogValue temperature;
+        private bool sent;
 
         public event EventHandler<StateChangeEventArgs> StateChanged;
 
@@ -31,6 +162,7 @@ namespace GatewayCoreModule
             batteryVoltage.StateChanged += BatteryVoltage_StateChanged;
             temperature = new AnalogValue(UnitsTemperature.Celsius);
             temperature.StateChanged += Temperature_StateChanged;
+            sent = false;
         }
 
         private void PowerVoltage_StateChanged(object sender, StateChangeEventArgs e)
@@ -68,10 +200,16 @@ namespace GatewayCoreModule
             return st;
         }
 
+        public void ToJsonFile(string filePath)
+        {
+            string st = JsonConvert.SerializeObject(this, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include, FloatFormatHandling = FloatFormatHandling.String, Formatting = Formatting.Indented });
+            File.WriteAllText(filePath, st);
+        }
+
         public DateTime UtcTime
         {
             get { return utcTime; }
-            set { utcTime = value; }
+            set { utcTime = RoundDateTime.RoundToSeconds(((DateTime)value).ToUniversalTime()); }
         }
 
         public AnalogValue PowerVoltage
@@ -97,6 +235,13 @@ namespace GatewayCoreModule
             get { return temperature; }
             set { temperature = value; }
         }
+
+        [JsonIgnore]
+        public bool Sent
+        {
+            get { return sent; }
+            set { sent = value; }
+        }
     }
 
     public class GatewayEvent
@@ -118,10 +263,16 @@ namespace GatewayCoreModule
             return st;
         }
 
+        public void ToJsonFile(string filePath)
+        {
+            string st = JsonConvert.SerializeObject(this, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include, FloatFormatHandling = FloatFormatHandling.String, Formatting = Formatting.Indented });
+            File.WriteAllText(filePath, st);
+        }
+
         public DateTime UtcTime
         {
             get { return utcTime; }
-            set { utcTime = value; }
+            set { utcTime = RoundDateTime.RoundToSeconds(((DateTime)value).ToUniversalTime()); }
         }
 
         [JsonConverter(typeof(StringEnumConverter))]

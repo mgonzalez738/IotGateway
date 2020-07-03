@@ -178,6 +178,7 @@ namespace GatewayCoreModule
         private GatewayDataPollConfiguration pollData;
         private GatewayDetachedTelemetryConfiguration detachedTelemetry;
         private GatewayVariableConfiguration variable;
+        private string deviceTag;
 
         public event EventHandler PollDataChanged;
         public event EventHandler DetachedTelemetryChanged;
@@ -188,6 +189,7 @@ namespace GatewayCoreModule
             pollData = new GatewayDataPollConfiguration();
             detachedTelemetry = new GatewayDetachedTelemetryConfiguration();
             variable = new GatewayVariableConfiguration();
+            deviceTag = "";
         }
 
         public string ToJsonString()
@@ -270,6 +272,12 @@ namespace GatewayCoreModule
         {
             get { return variable; }
             set { variable = value; }
+        }
+
+        public string DeviceTag
+        {
+            get { return deviceTag; }
+            set { deviceTag = value; }
         }
 
     }

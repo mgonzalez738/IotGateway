@@ -61,11 +61,17 @@
       "properties.desired": {
         "schemaVersion": "1.0",
         "routes": {
-          "GatewayCoreModuleToIoTHub": "FROM /messages/modules/GatewayCoreModule/outputs/* INTO $upstream"
+          "GatewayCoreModuleToIoTHub": "FROM /messages/modules/GatewayCore/outputs/* INTO $upstream"
         },
         "storeAndForwardConfiguration": {
           "timeToLiveSecs": 7200
         }
+      }
+    },
+    "GatewayCore": {
+      "properties.desired": {
+        "DeviceTag": "Raspberry3",
+        "DeviceType": "Gateway"
       }
     }
   }
