@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Azure.Storage;
 using Microsoft.Azure.Storage.Blob;
 using Newtonsoft.Json.Linq;
+using Newtonsoft.Json;
 
 namespace RouteTelemetry
 {
@@ -56,7 +57,7 @@ namespace RouteTelemetry
                 }
 
                 // Agrega los datos
-                appendBlob.AppendText(body.ToString());
+                appendBlob.AppendText(body.ToString(Formatting.None) + System.Environment.NewLine);
 
                 //log.LogInformation("Oks");
             }
