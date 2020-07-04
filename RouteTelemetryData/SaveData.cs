@@ -10,6 +10,7 @@ using Microsoft.Azure.Storage;
 using Microsoft.Azure.Storage.Blob;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
+using Microsoft.Extensions.Configuration;
 
 namespace RouteTelemetry
 {
@@ -37,7 +38,7 @@ namespace RouteTelemetry
 
             //log.LogInformation(file);
 
-            if (CloudStorageAccount.TryParse("DefaultEndpointsProtocol=https;AccountName=monitoringstoragemog;AccountKey=nqILYPqqSbP2TxQ2Y6qbE4Z1QTeRE/IXa0hXEpb1NJpAovDyNxaPTAiz2LW9Dq7ywjAwJiyrDk+/kt7FgM+87Q==;EndpointSuffix=core.windows.net", out CloudStorageAccount cloudStorageAccount))
+            if (CloudStorageAccount.TryParse(Environment.GetEnvironmentVariable("ConnectionString_AzureStorage"), out CloudStorageAccount cloudStorageAccount))
             {
                 // Crea el cliente al almacenamiento
                 var cloudBlobClient = cloudStorageAccount.CreateCloudBlobClient();
@@ -63,7 +64,7 @@ namespace RouteTelemetry
             }
             else
             {
-                log.LogInformation("Error");
+                log.LogError("No se pudo acceder al almacenamiento");
             }
 
         }
