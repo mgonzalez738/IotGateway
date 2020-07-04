@@ -70,7 +70,7 @@
     },
     "GatewayCore": {
       "properties.desired": {
-        "DeviceTag": "Raspberry3",
+        "DeviceTag": "Raspberry4",
         "DeviceType": "Gateway"
       }
     }

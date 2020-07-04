@@ -17,8 +17,9 @@ namespace RouteTelemetry
         [FunctionName("SaveData")]
         public static void Run([EventGridTrigger]EventGridEvent eventGridEvent, ILogger log)
         {
+            //log.LogInformation("DATA");
             //log.LogInformation(eventGridEvent.Data.ToString());
-            
+
             // Cast de los datos recibidos del IoT Hub a JObject
             JObject jOb = (JObject)eventGridEvent.Data;
 
@@ -31,7 +32,7 @@ namespace RouteTelemetry
             string device = systemProperties["iothub-connection-device-id"].ToString().ToLower();
             string type = properties["MessageType"].ToString().ToLower();
             DateTime dt = DateTime.Parse(body["UtcTime"].ToString());
-            string file = $"{dt.Year}/{dt.Month:D2}/{dt.Day:D2}/{device}_{type}_{dt.Year}_{dt.Month:D2}_{dt.Day:D2}.json";
+            string file = $"{device}/{type}/{dt.Year}/{dt.Month:D2}/{dt.Day:D2}/{device}_{type}_{dt.Year}_{dt.Month:D2}_{dt.Day:D2}.json";
 
             //log.LogInformation(file);
 
@@ -41,7 +42,7 @@ namespace RouteTelemetry
                 var cloudBlobClient = cloudStorageAccount.CreateCloudBlobClient();
 
                 // Obtiene referencia o crea contenedor
-                var cloudBlobContainer = cloudBlobClient.GetContainerReference(device);
+                var cloudBlobContainer = cloudBlobClient.GetContainerReference("monitoreo");
                 if(!cloudBlobContainer.Exists())
                 {
                     cloudBlobContainer.Create();
