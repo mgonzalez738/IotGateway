@@ -135,10 +135,6 @@ namespace GatewayCoreModule
         }
     }
 
-    public enum GatewayMessageType { Data, Event }
-
-    public enum GatewayEventType { Info, Warning, Error, Debug }
-
     public class GatewayData
     {
         private DateTime utcTime;
@@ -247,13 +243,13 @@ namespace GatewayCoreModule
     public class GatewayEvent
     {
         private DateTime utcTime;
-        private GatewayEventType messageType;
+        private EventType messageType;
         private String message;
 
         public GatewayEvent()
         {
             utcTime = new DateTime();
-            messageType = GatewayEventType.Info;
+            messageType = EventType.Info;
             message = "";
         }
 
@@ -276,7 +272,7 @@ namespace GatewayCoreModule
         }
 
         [JsonConverter(typeof(StringEnumConverter))]
-        public GatewayEventType MessageType
+        public EventType MessageType
         {
             get { return messageType; }
             set { messageType = value; }

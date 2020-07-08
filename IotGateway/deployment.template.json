@@ -106,12 +106,6 @@
           "timeToLiveSecs": 7200
         }
       }
-    },
-    "GatewayCore": {
-      "properties.desired": {
-        "DeviceTag": "Raspberry3",
-        "DeviceType": "Gateway"
-      }
     }
   }
 }

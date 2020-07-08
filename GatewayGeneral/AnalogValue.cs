@@ -15,7 +15,7 @@ namespace GatewayGeneral
 
         public override void WriteJson(JsonWriter writer, AnalogValue value, Newtonsoft.Json.JsonSerializer serializer)
         {
-            writer.WriteValue(value.Value.ToString("0.000000"));
+            writer.WriteValue(value.Value.ToString("0.00"));
         }
     }
 
@@ -229,78 +229,78 @@ namespace GatewayGeneral
         {
             AnalogValueState next = AnalogValueState.Normal;
 
-            if (config.EnableLowLow && (value < config.LimitLowLow))
-                next = AnalogValueState.LowLow;
-            else if (config.EnableLow && (value < config.LimitLow))
-                next = AnalogValueState.Low;
-            else if (config.EnableHighHigh && (value > config.LimitHighHigh))
+            if (config.EnableHighHigh && (value > config.LimitHighHigh))
                 next = AnalogValueState.HighHigh;
             else if (config.EnableHigh && (value > config.LimitHigh))
                 next = AnalogValueState.High;
+            else if (config.EnableLowLow && (value < config.LimitLowLow))
+                next = AnalogValueState.LowLow;
+            else if (config.EnableLow && (value < config.LimitLow))
+                next = AnalogValueState.Low;
 
             return next;
         }
 
         private AnalogValueState checkInHighState()
         {
-            AnalogValueState next = AnalogValueState.High;
+            AnalogValueState next = AnalogValueState.Normal;
 
-            if (config.EnableLowLow && (value < config.LimitLowLow))
+            if (config.EnableHighHigh && (value > config.LimitHighHigh))
+                next = AnalogValueState.HighHigh;
+            else if (config.EnableHigh && (value > (config.LimitHigh - config.LimitHysteresis)))
+                next = AnalogValueState.High;
+            else if (config.EnableLowLow && (value < config.LimitLowLow))
                 next = AnalogValueState.LowLow;
             else if (config.EnableLow && (value < config.LimitLow))
                 next = AnalogValueState.Low;
-            else if (value < (config.LimitHigh - config.LimitHysteresis))
-                next = AnalogValueState.Normal;
-            else if (config.EnableHighHigh && (value > config.LimitHighHigh))
-                next = AnalogValueState.HighHigh;
 
             return next;
         }
 
         private AnalogValueState checkInLowState()
         {
-            AnalogValueState next = AnalogValueState.Low;
+            AnalogValueState next = AnalogValueState.Normal;
 
             if (config.EnableLowLow && (value < config.LimitLowLow))
                 next = AnalogValueState.LowLow;
+            if (config.EnableLow && (value < (config.LimitLow + config.LimitHysteresis)))
+                next = AnalogValueState.Low;
             else if (config.EnableHighHigh && (value > config.LimitHighHigh))
                 next = AnalogValueState.HighHigh;
             else if (config.EnableHigh && (value > config.LimitHigh))
                 next = AnalogValueState.High;
-            else if (value > (config.LimitLow + config.LimitHysteresis))
-                next = AnalogValueState.Normal;
 
             return next;
         }
 
         private AnalogValueState checkInHighHighState()
         {
-            AnalogValueState next = AnalogValueState.HighHigh;
+            AnalogValueState next = AnalogValueState.Normal;
 
-            if (config.EnableLowLow && (value < config.LimitLowLow))
+            if(config.EnableHighHigh && (value > (config.LimitHighHigh - config.LimitHysteresis)))
+                next = AnalogValueState.HighHigh;
+            else if(config.EnableHigh && (value > (config.LimitHigh - config.LimitHysteresis)))
+                next = AnalogValueState.High;
+            else if (config.EnableLowLow && (value < config.LimitLowLow))
                 next = AnalogValueState.LowLow;
             else if (config.EnableLow && (value < config.LimitLow))
                 next = AnalogValueState.Low;
-            else if (value < config.LimitHigh)
-                next = AnalogValueState.Normal;
-            else if (config.EnableHigh && (value < (config.LimitHighHigh - config.LimitHysteresis)))
-                next = AnalogValueState.High;
 
             return next;
         }
 
         private AnalogValueState checkInLowLowState()
         {
-            AnalogValueState next = AnalogValueState.LowLow;
+            AnalogValueState next = AnalogValueState.Normal;
 
-            if (config.EnableHighHigh && (value > config.LimitHighHigh))
+            if (config.EnableLowLow && (value < (config.LimitLowLow + config.LimitHysteresis)))
+                next = AnalogValueState.LowLow;
+            else if (config.EnableLow && (value < (config.LimitLow + config.LimitHysteresis)))
+                next = AnalogValueState.Low;
+            else if (config.EnableHighHigh && (value > config.LimitHighHigh))
                 next = AnalogValueState.HighHigh;
             else if (config.EnableHigh && (value > config.LimitHigh))
                 next = AnalogValueState.High;
-            else if (value > config.LimitLow)
-                next = AnalogValueState.Normal;
-            else if (config.EnableLow && (value > (config.LimitLowLow + config.LimitHysteresis)))
-                next = AnalogValueState.Low;
 
             return next;
         }

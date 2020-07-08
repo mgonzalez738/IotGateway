@@ -12,7 +12,7 @@ namespace GatewayGeneral
 
     public static class UnitsTemperature
     {
-        public static String Celsius { get { return "°C"; } }
+        public static String Celsius { get { return "grC"; } }
     }
 
     public static class UnitsDistance

@@ -20,9 +20,11 @@
   <ItemGroup>
     <PackageReference Include="Iot.Device.Bindings" Version="1.0.0" />
     <PackageReference Include="Microsoft.Azure.Devices.Client" Version="1.26.0" />
+    <PackageReference Include="System.IO.Ports" Version="4.7.0" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\DeviceTowerInclinometer\DeviceTowerInclinometer.csproj" />
     <ProjectReference Include="..\GatewayGeneral\GatewayGeneral.csproj" />
     <ProjectReference Include="..\SocketTpl\TplSockets.csproj" />
     <ProjectReference Include="..\TplResult\TplResult.csproj" />

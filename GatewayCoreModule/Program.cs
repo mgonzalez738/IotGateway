@@ -24,6 +24,11 @@ namespace GatewayCoreModule
     using Newtonsoft.Json.Linq;
     using System.Linq;
     using System.Globalization;
+    using System.IO.Ports;
+
+    using TowerInclinometer;
+    using System.Collections.Generic;
+    using Iot.Device.BrickPi3.Models;
 
     class Program
     {
@@ -39,6 +44,10 @@ namespace GatewayCoreModule
 
         static int statusLedPeriodMs = 1000;
         static int statusLedOnMs = 200;
+
+        private static List<IDevicesRs485> DevicesRs485;
+
+        private readonly SemaphoreSlim sendLock = new SemaphoreSlim(1, 1);
 
         static void Main()
         {
@@ -66,6 +75,10 @@ namespace GatewayCoreModule
         /// </summary>
         static async Task Init()
         {
+            WriteColor.Set(WriteColor.AnsiColors.Yellow);
+            Art.Write();
+            WriteColor.Set(WriteColor.AnsiColors.Reset);
+
             // Establece el protocolo de comunicacion
 
             MqttTransportSettings mqttSetting = new MqttTransportSettings(TransportType.Mqtt_Tcp_Only);
@@ -96,14 +109,15 @@ namespace GatewayCoreModule
             // Inicia el modulo
 
             await gatewayModuleClient.OpenAsync();
-            Console.WriteLine($"{DateTime.Now}> Modulo Gateway inicializado.");           
+            Console.WriteLine("");
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Inicializando.");           
 
             // Obtiene el path a las carpetas en el host
 
             storageFolder = Environment.GetEnvironmentVariable("storageFolder");
             configFolder = Environment.GetEnvironmentVariable("configFolder");
-            Console.WriteLine($"{DateTime.Now}> Path a carpeta de almacenamiento cargado: {storageFolder}.");
-            Console.WriteLine($"{DateTime.Now}> Path a carpeta de configuracion cargado: {configFolder}.");
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Path a carpeta de almacenamiento cargado: {storageFolder}.");
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Path a carpeta de configuracion cargado: {configFolder}.");
 
             // Carga la configuracion desde host
             // En caso de error, crea configuracion default y la guarda en Host
@@ -111,21 +125,25 @@ namespace GatewayCoreModule
             try
             {
                 gwProperties = GatewayProperties.FromJsonFile(configFolder + "config.json");
-                Console.WriteLine($"{DateTime.Now}> Configuracion cargada desde host.");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Configuracion cargada desde host.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"{DateTime.Now}> Error cargando configuracion desde host -> {ex.Message}");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error cargando configuracion desde host -> {ex.Message}");
                 gwProperties = new GatewayProperties();
-                Console.WriteLine($"{DateTime.Now}> Configuracion por defecto creada.");
+
+                // Borrar
+                gwProperties.DevicesRs485.Add(new DeviceRs485Configuration("InclinometerRaspi3", DeviceTypes.TowerInclinometer, "HostName=MonitoringHub.azure-devices.net;DeviceId=InclinometerRaspi3;SharedAccessKey=dM/4HP/pm4yO+pdjVh2Gp5jDRgZA+22N2J1zzRl1MeM="));
+
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Configuracion por defecto creada.");
                 try
                 {
                     gwProperties.ToJsonFile(configFolder + "config.json");
-                    Console.WriteLine($"{DateTime.Now}> Configuracion por defecto guardada en host.");
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Configuracion por defecto guardada en host.");
                 }
                 catch (Exception ex2)
                 {
-                    Console.WriteLine($"{DateTime.Now}> Error guardando configuración en Host -> {ex2.Message}");
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error guardando configuración en Host -> {ex2.Message}");
                 }         
             }
 
@@ -134,7 +152,7 @@ namespace GatewayCoreModule
             InclinometerChainData inc = new InclinometerChainData(12);
             int i;
             Random rnd = new Random();
-            inc.UtcTime = DateTime.Now;
+            inc.UtcTime = RoundDateTime.RoundToSeconds(DateTime.Now);
             for (i = 0; i < inc.Nodes.Count; i++)
             {
                 inc.Nodes[i].Heigh.Value = 6+i*6;
@@ -165,41 +183,45 @@ namespace GatewayCoreModule
                 if (res.Success)
                 {
                     gwHardware.SetRtcDateTime(res.Value);
-                    Console.WriteLine($"{DateTime.Now}> Fecha y Hora del RTC actualizada por NTP [{res.Value}].");
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Fecha y Hora del RTC actualizada por NTP [{res.Value}].");
                 }
                 else
-                    Console.WriteLine($"{DateTime.Now}> Error actualizando RTC por NTP[{ res.Error}].");
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error actualizando RTC por NTP[{ res.Error}].");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"{DateTime.Now}> Error obteniendo hora por NTP -> {ex.Message}.");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error obteniendo hora por NTP -> {ex.Message}.");
             }
 
             // Envia el evento de reinicio al Hub
 
             GatewayEvent gevt = new GatewayEvent();
-            gevt.UtcTime = DateTime.Now;
-            gevt.MessageType = GatewayEventType.Info;
+            gevt.UtcTime = RoundDateTime.RoundToSeconds(DateTime.Now);
+            gevt.MessageType = EventType.Info;
             gevt.Message = "Gateway Reiniciado";
-            _ = SendEventMessage(gevt);
+            await SendEventMessage(gevt);
 
             // Obtiene el gemelo y sincroniza propiedades con deseadas del Hub
 
             try
             {
                 var twin = await gatewayModuleClient.GetTwinAsync();
-                Console.WriteLine($"{DateTime.Now}> Propiedades deseadas descargadas desde el Hub.");
-                UpdateGatewayProperties(twin.Properties.Desired);
+                WriteColor.Set(WriteColor.AnsiColors.Cyan);
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Descarga propiedades deseadas (V:" + twin.Properties.Desired.Version.ToString() + ").");
+                WriteColor.Set(WriteColor.AnsiColors.Reset);
+                await UpdateGatewayProperties(twin.Properties.Desired);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"{DateTime.Now}> Error descargando propiedades deseadas del Hub -> {ex.Message}.");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error descargando propiedades deseadas del Hub -> {ex.Message}.");
             }
 
             // Actualiza propiedades reportadas
 
             await SendReportedProperties(gwProperties);
-            Console.WriteLine($"{DateTime.Now}> Actualizacion de propiedades reportadas enviada.");
+            WriteColor.Set(WriteColor.AnsiColors.Cyan);
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Envio propiedades reportadas.");
+            WriteColor.Set(WriteColor.AnsiColors.Reset);
 
             // Inicia la tarea del led de status
 
@@ -218,27 +240,41 @@ namespace GatewayCoreModule
             {
                 // Inicia el timer de encuesta de datos
                 timerPollData.Start(gwProperties.PollData.Period, gwProperties.PollData.Unit);
-                Console.WriteLine($"{DateTime.Now}> Primera ejecucion encuesta datos: {timerPollData.FirstExcecution} / Periodo: {timerPollData.PeriodMs} ms");             
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Primera ejecucion encuesta datos: {timerPollData.FirstExcecution} / Periodo: {timerPollData.PeriodMs} ms");             
                 if(gwProperties.DetachedTelemetry.Enabled)
                 {
                     // Inicia el timer de telemetria de datos si esta desdoblado
                     timerSendData.Start(gwProperties.DetachedTelemetry.Period, gwProperties.DetachedTelemetry.Unit);
-                    Console.WriteLine($"{DateTime.Now}> Primera ejecucion telemetria datos: {timerSendData.FirstExcecution} / Periodo: {timerSendData.PeriodMs} ms");
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Primera ejecucion telemetria datos: {timerSendData.FirstExcecution} / Periodo: {timerSendData.PeriodMs} ms");
                 }
                 else
                 {
-                    Console.WriteLine($"{DateTime.Now}> Telemetria de datos simultanea con encuesta.");
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Telemetria de datos simultanea con encuesta.");
                 }
             }
             else
             {
-                Console.WriteLine($"{DateTime.Now}> Encuesta datos y telemetria deshabilitadas.");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Encuesta datos y telemetria deshabilitadas.");
             }
 
             // Registra eventos de cambio de propiedades
 
             gwProperties.PollDataChanged += GwProperties_PollDataChanged;
             gwProperties.DetachedTelemetryChanged += GwProperties_DetachedTelemetryChanged;
+
+            // CREA DISPOSITIVOS
+
+            // Rs485
+
+            DevicesRs485 = new List<IDevicesRs485>();
+            foreach(DeviceRs485Configuration devConf in gwProperties.DevicesRs485)
+            {
+                if (devConf.DeviceType == DeviceTypes.TowerInclinometer)
+                    DevicesRs485.Add(new DeviceTowerInclinometer(devConf.DeviceId, DeviceInterfaces.Rs485, devConf.ConnectionString));
+            }
+
+            foreach (IDevicesRs485 dev in DevicesRs485)
+                await dev.Init();
         }
 
         // ENCUESTA Y TELEMETRIA DE DATOS
@@ -250,13 +286,13 @@ namespace GatewayCoreModule
 
             // Envia la telemetria si no esta separada
             if(!gwProperties.DetachedTelemetry.Enabled)
-                _ = SendTelemetryMessage();
+                _ = SendDataMessage();
         }
 
         private static void TimerSendData_Elapsed(object sender, EventArgs e)
         {
             // Envia la telemetria
-            _ = SendTelemetryMessage();
+            _ = SendDataMessage();
         }
 
         // TAREA STATUS
@@ -280,15 +316,15 @@ namespace GatewayCoreModule
         private static void GwHardware_UserButtonPushed(object sender, EventArgs e)
         {
             // Loggea en consola el boton pulsado
-            Console.WriteLine($"{DateTime.Now}> User Button presionado.");
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] User Button presionado.");
 
             // Cambia el estado del led de usuario
             gwHardware.ToggleUserLed();
 
             // Crea el evento
             GatewayEvent gevt = new GatewayEvent();
-            gevt.UtcTime = DateTime.Now;
-            gevt.MessageType = GatewayEventType.Info;
+            gevt.UtcTime = RoundDateTime.RoundToSeconds(DateTime.Now);
+            gevt.MessageType = EventType.Info;
             gevt.Message = "User Button presionado";
                         
             // Envia el evento
@@ -301,7 +337,7 @@ namespace GatewayCoreModule
 
         private static void GwProperties_PollDataChanged(object sender, EventArgs e)
         {
-            Console.WriteLine($"{DateTime.Now}> Propiedad PollData modificada.");
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Propiedad PollData modificada.");
 
             // Detiene la encuesta
 
@@ -310,18 +346,18 @@ namespace GatewayCoreModule
             if (gwProperties.PollData.Enabled)
             {
                 timerPollData.Start(gwProperties.PollData.Period, gwProperties.PollData.Unit);
-                Console.WriteLine($"{DateTime.Now}> Proxima ejecucion encuesta datos: {timerPollData.FirstExcecution} / Periodo: {timerPollData.PeriodMs} ms");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Proxima ejecucion encuesta datos: {timerPollData.FirstExcecution} / Periodo: {timerPollData.PeriodMs} ms");
             }
             else
             {
                 timerSendData.Stop();
-                Console.WriteLine($"{DateTime.Now}> Encuesta datos y telemetria datos deshabilitadas.");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Encuesta datos y telemetria datos deshabilitadas.");
             }
         }
 
         private static void GwProperties_DetachedTelemetryChanged(object sender, EventArgs e)
         {
-            Console.WriteLine($"{DateTime.Now}> Propiedad DetachedTelemetry modificada.");
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Propiedad DetachedTelemetry modificada.");
 
             // Detiene la telemetria
 
@@ -330,25 +366,29 @@ namespace GatewayCoreModule
             if (gwProperties.DetachedTelemetry.Enabled)
             {
                 timerSendData.Start(gwProperties.DetachedTelemetry.Period, gwProperties.DetachedTelemetry.Unit);
-                Console.WriteLine($"{DateTime.Now}> Proxima ejecucion telemetria datos: {timerSendData.FirstExcecution} / Periodo: {timerSendData.PeriodMs} ms");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Proxima ejecucion telemetria datos: {timerSendData.FirstExcecution} / Periodo: {timerSendData.PeriodMs} ms");
             }
             else
-                Console.WriteLine($"{DateTime.Now}> Telemetria de datos simultanea con encuesta.");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Telemetria de datos simultanea con encuesta.");
         }
 
         // EVENTOS DEL MODULO
 
         private static async Task OnDesiredPropertyChanged(TwinCollection desiredProperties, object userContext)
         {
-            Console.WriteLine($"{DateTime.Now}> Actualizacion de propiedades deseadas recibida.");
+            WriteColor.Set(WriteColor.AnsiColors.Cyan);
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Recepcion propiedades deseadas (V:" + desiredProperties.Version.ToString() + ").");
+            WriteColor.Set(WriteColor.AnsiColors.Reset);
 
-            UpdateGatewayProperties(desiredProperties);
+            await UpdateGatewayProperties(desiredProperties);
 
             // Envia las propiedades reportadas
 
             await SendReportedProperties(gwProperties);
 
-            Console.WriteLine($"{DateTime.Now}> Actualizacion de propiedades reportadas enviada.");
+            WriteColor.Set(WriteColor.AnsiColors.Cyan);
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Envio propiedades reportadas.");
+            WriteColor.Set(WriteColor.AnsiColors.Reset);
         }
 
         /// <summary>
@@ -356,12 +396,12 @@ namespace GatewayCoreModule
         /// </summary>
         static Task<MessageResponse> PipeMessage(Message message, object userContext)
         {
-            Console.WriteLine($"{DateTime.Now}: Mensaje recibido.");
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Mensaje recibido.");
 
             var moduleClient = (ModuleClient)userContext;
             if (moduleClient == null)
             {
-                Console.WriteLine($"{DateTime.Now}: Error: No indica Modulo en el contexto.");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error: No indica Modulo en el contexto.");
             }
 
             byte[] messageBytes = message.GetBytes();
@@ -395,7 +435,7 @@ namespace GatewayCoreModule
 
                 if (connectResult.Failure)
                 {
-                    Console.WriteLine($"{DateTime.Now}: Error conctando al servidor NTP {ntpServer}");
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error conctando al servidor NTP {ntpServer}");
                     Console.WriteLine($"{connectResult.Error}");
                     return Result.Fail<DateTime>(connectResult.Error);
                 }
@@ -404,7 +444,7 @@ namespace GatewayCoreModule
 
                 if (sendResult.Failure)
                 {
-                    Console.WriteLine($"{DateTime.Now}: Error enviando datos al servidor NTP {ntpServer}");
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error enviando datos al servidor NTP {ntpServer}");
                     Console.WriteLine($"{sendResult.Error}");
                     return Result.Fail<DateTime>(connectResult.Error);
                 }
@@ -413,7 +453,7 @@ namespace GatewayCoreModule
 
                 if (receiveResult.Failure)
                 {
-                    Console.WriteLine($"{DateTime.Now}: Error recibiendo datos del servidor NTP {ntpServer}");
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error recibiendo datos del servidor NTP {ntpServer}");
                     Console.WriteLine($"{receiveResult.Error}");
                     return Result.Fail<DateTime>(connectResult.Error);
                 }
@@ -452,21 +492,21 @@ namespace GatewayCoreModule
                            ((x & 0xff000000) >> 24));
         }
 
-        static void UpdateGatewayProperties(TwinCollection desiredProp)
+        static async Task UpdateGatewayProperties(TwinCollection desiredProp)
         {
             // Poll Data
             try
             {
                 GatewayDataPollConfiguration gpdc = GatewayDataPollConfiguration.FromJsonString(desiredProp["PollData"].ToString());
-                gwProperties.PollData = gpdc;     
+                gwProperties.PollData = gpdc;
             }
-            catch (ArgumentException ex)
+            catch (ArgumentException)
             {
-                Console.WriteLine($"{DateTime.Now}> No hay configuracion para Poll Data -> {ex.Message}");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No hay configuracion para Poll Data.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"{DateTime.Now}> Error en configuracion de Poll Data (Ingnorando cambios) -> {ex.Message}");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error en configuracion de Poll Data (Ingnorando cambios) -> {ex.Message}");              
             }
 
             // Detached Telemetry
@@ -475,27 +515,81 @@ namespace GatewayCoreModule
                 GatewayDetachedTelemetryConfiguration gdtc = GatewayDetachedTelemetryConfiguration.FromJsonString(desiredProp["DetachedTelemetry"].ToString());
                 gwProperties.DetachedTelemetry = gdtc;
             }
-            catch (ArgumentException ex)
+            catch (ArgumentException)
             {
-                Console.WriteLine($"{DateTime.Now}> No hay configuracion para DetachedTelemetry -> {ex.Message}");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No hay configuracion para DetachedTelemetry.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"{DateTime.Now}> Error en configuracion de DetachedTelemetry (Ingnorando cambios) -> {ex.Message}");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error en configuracion de DetachedTelemetry (Ingnorando cambios) -> {ex.Message}");               
             }
 
-            // Device Tag
+            // Variable
             try
             {
-                gwProperties.DeviceTag = desiredProp["DeviceTag"].ToString();
-                Console.WriteLine($"{DateTime.Now}> DeviveTag = {gwProperties.DeviceTag}");
+                GatewayVariableConfiguration gvc = GatewayVariableConfiguration.FromJsonString(desiredProp["Variable"].ToString());
+                gwProperties.Variable = gvc;
+                gwData.PowerVoltage.Config = gwProperties.Variable.PowerVoltage;
+                gwData.SensedVoltage.Config = gwProperties.Variable.SensedVoltage;
+                gwData.BatteryVoltage.Config = gwProperties.Variable.BatteryVoltage;
+                gwData.Temperature.Config = gwProperties.Variable.Temperature;
             }
-            catch (ArgumentException ex)
+            catch (ArgumentException)
             {
-                gwProperties.DeviceTag = "";
-                Console.WriteLine($"{DateTime.Now}> No hay configuracion para DeviceTag -> {ex.Message}");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No hay configuracion para Variable.");
             }
-            
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error en configuracion de Variable (Ingnorando cambios) -> {ex.Message}");                   
+            }
+
+            // DevicesRs485
+            try
+            {
+                List<DeviceRs485Configuration> ldev = JsonConvert.DeserializeObject< List<DeviceRs485Configuration> >(desiredProp["DevicesRs485"].ToString(), new DeviceRs485ConfigurationListJsonConverter());
+                if (ldev == null)
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No hay configuracion para DevicesRs485.");
+                else
+                {
+                    // Desconecta los dispositivos actuales y borra la lista
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Eliminando dispositivos actuales RS485.");
+                    foreach (IDevicesRs485 dev in DevicesRs485)
+                    {
+                        await dev.Stop();
+                    }
+                    DevicesRs485.Clear();
+
+                    // Guarda la nueva configuracion de dispositivos
+                    gwProperties.DevicesRs485 = ldev;
+
+                    // Crea los nuevos dispositivos y los inicializa
+                    if (gwProperties.DevicesRs485.Count > 0)
+                    {
+                        await Task.Delay(10);
+                        Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Creando nuevos dispositivos RS485.");
+                        DevicesRs485 = new List<IDevicesRs485>();
+                        foreach (DeviceRs485Configuration devConf in gwProperties.DevicesRs485)
+                        {
+                            if (devConf.DeviceType == DeviceTypes.TowerInclinometer)
+                                DevicesRs485.Add(new DeviceTowerInclinometer(devConf.DeviceId, DeviceInterfaces.Rs485, devConf.ConnectionString));
+                        }
+
+                        foreach (IDevicesRs485 dev in DevicesRs485)
+                            await dev.Init();
+                    }
+                    
+                }
+                
+            }
+            catch (ArgumentException)
+            {
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No hay configuracion para DevicesRs485.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error en configuracion de DevicesRs485 (Ingnorando cambios) -> {ex.Message}");
+            }
+
             // Guarda las propiedades en archivo de configuraion
             gwProperties.ToJsonFile(configFolder + "config.json");
         }
@@ -503,35 +597,41 @@ namespace GatewayCoreModule
         static void GetGatewayData()
         {
             // Adquiere datos del gateway
-            
+            DateTime dt = DateTime.UtcNow;
+            float power = gwHardware.GetPowerVoltage();
+            float sensed = gwHardware.GetSensedVoltage();
+            float battery = gwHardware.GetBatteryVoltage();
+            float temperature = gwHardware.GetRtcTemperature();
+
+            // Loggea la adquisicion
+            Console.Write($"{dt}> [Gateway] Encuesta datos: ");
+            Console.Write($"PowerVoltage = {power:0.00} {gwData.PowerVoltage.Config.Unit} | ");
+            Console.Write($"SensedVoltage = {sensed:0.00} {gwData.SensedVoltage.Config.Unit} | ");
+            Console.Write($"BatteryVoltage = {battery:0.00} {gwData.BatteryVoltage.Config.Unit} | ");
+            Console.WriteLine($"Temperature = {temperature:0.00} {gwData.Temperature.Config.Unit}.");
+
+            // Guarda los datos
             gwData.UtcTime = DateTime.UtcNow;
-            gwData.PowerVoltage.Value = gwHardware.GetPowerVoltage();
-            gwData.SensedVoltage.Value = gwHardware.GetSensedVoltage();
-            gwData.BatteryVoltage.Value = gwHardware.GetBatteryVoltage();
-            gwData.Temperature.Value = gwHardware.GetRtcTemperature();
-            gwData.Sent = false;
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.Write($"{DateTime.Now}> Encuesta datos: ");
-            Console.Write($"PowerVoltage = {gwData.PowerVoltage.Value:0.000000} {gwData.PowerVoltage.Config.Unit} | ");
-            Console.Write($"SensedVoltage = {gwData.SensedVoltage.Value:0.000000} {gwData.SensedVoltage.Config.Unit} | ");
-            Console.Write($"BatteryVoltage = {gwData.BatteryVoltage.Value:0.000000} {gwData.BatteryVoltage.Config.Unit} | ");
-            Console.WriteLine($"Temperature = {gwData.Temperature.Value:0.000000} {gwData.Temperature.Config.Unit}.");
+            gwData.PowerVoltage.Value = power;
+            gwData.SensedVoltage.Value = sensed;
+            gwData.BatteryVoltage.Value = battery;
+            gwData.Temperature.Value = temperature;
+            gwData.Sent = false;        
         }
 
         private static void gwData_VarableStateChanged(object sender, StateChangeEventArgs e)
         {
             AnalogValue val = (AnalogValue)sender;
             GatewayEvent gevt = new GatewayEvent();
-            gevt.UtcTime = DateTime.Now;
-            gevt.MessageType = GatewayEventType.Warning;
-            gevt.Message = $"Cambio de estado. {e.PropertyName} = {val.Value:0.000000} {val.Config.Unit} ({e.PreviousState} -> {e.ActualState}).";
+            gevt.UtcTime = RoundDateTime.RoundToSeconds(DateTime.Now);
+            gevt.MessageType = EventType.Warning;
+            gevt.Message = $"Cambio de estado. {e.PropertyName} = {val.Value:0.00} {val.Config.Unit} ({e.PreviousState} -> {e.ActualState}).";
+            Task.Delay(10); // Evita que se envien dos mensajes de datos
+            _ = SendDataMessage();
             _ = SendEventMessage(gevt);
-            _ = SendTelemetryMessage();
-
-            gevt.ToJsonFile(configFolder + "variable.json");
         }
 
-        private static async Task SendTelemetryMessage()
+        private static async Task SendDataMessage()
         {
             // Verifica que los datos no hayan sido enviados aun
             if (!gwData.Sent)
@@ -542,17 +642,17 @@ namespace GatewayCoreModule
                 msg.ContentType = "application/json";
 
                 // Agrega propiedad identificando al mensaje como de datos
-                msg.Properties.Add("MessageType", GatewayMessageType.Data.ToString());
-                msg.Properties.Add("DeviceTag", gwProperties.DeviceTag);
-                msg.Properties.Add("DeviceType", "Gateway");
+                msg.Properties.Add("MessageType", MessageType.Data.ToString());
+                msg.Properties.Add("DeviceType", DeviceTypes.Gateway.ToString());
 
                 // Marca los datos como enviados y los envia
                 gwData.Sent = true;
                 await gatewayModuleClient.SendEventAsync("output1", msg);
 
                 // Loggea el envio en consola
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"{DateTime.Now}> Envio Telemetria: {gwData.ToJsonString()}");
+                WriteColor.Set(WriteColor.AnsiColors.Green);
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Envio Datos: {gwData.ToJsonString()}");
+                WriteColor.Set(WriteColor.AnsiColors.Reset);
             }
         }
 
@@ -564,19 +664,21 @@ namespace GatewayCoreModule
             msg.ContentType = "application/json";
 
             // Agrega propiedad identificando al mensaje como Evento
-            msg.Properties.Add("MessageType", GatewayMessageType.Event.ToString());
-            msg.Properties.Add("DeviceTag", gwProperties.DeviceTag);
-            msg.Properties.Add("DeviceType", "Gateway");
+            msg.Properties.Add("MessageType", MessageType.Event.ToString());
+            msg.Properties.Add("DeviceType", DeviceTypes.Gateway.ToString());
             await gatewayModuleClient.SendEventAsync("output1", msg);
 
             // Loggea el envio en consola
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"{DateTime.Now}> Envio Evento: {gevt.ToJsonString()}");
+            WriteColor.Set(WriteColor.AnsiColors.Yellow);
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Envio Evento: {gevt.ToJsonString()}");
+            WriteColor.Set(WriteColor.AnsiColors.Reset);
         }
 
         private static async Task SendReportedProperties(GatewayProperties gp)
         {
             TwinCollection reportedProperties = new TwinCollection(gp.ToJsonString());
+            //Console.WriteLine(reportedProperties);
+
             await gatewayModuleClient.UpdateReportedPropertiesAsync(reportedProperties);
         }
 
@@ -588,9 +690,11 @@ namespace GatewayCoreModule
         private static Task<MethodResponse> OnNotImplementedMethod(MethodRequest methodRequest, object userContext)
         {
             string message = $"Metodo {methodRequest.Name} no implementado";
+            
+            WriteColor.Set(WriteColor.AnsiColors.Blue);
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] {message}.");
+            WriteColor.Set(WriteColor.AnsiColors.Reset);
 
-            Console.WriteLine($"{DateTime.Now}> {message}.");
-           
             var result = JsonConvert.SerializeObject(message, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
             return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(result), 404));
         }
@@ -600,21 +704,24 @@ namespace GatewayCoreModule
         /// </summary>
         private static async Task<MethodResponse> OnUpdateRtcFromNtp(MethodRequest methodRequest, object userContext)
         {
-            Console.WriteLine($"{DateTime.Now}> Metodo {methodRequest.Name} recibido.");
+            WriteColor.Set(WriteColor.AnsiColors.Blue);
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Metodo {methodRequest.Name} recibido.");
+            WriteColor.Set(WriteColor.AnsiColors.Reset);
+
             var res = await GetNetworkTime();
             
             if (res.Success)
             {
                 gwHardware.SetRtcDateTime(res.Value);
                 string message = $"Fecha y Hora del RTC actualizada por NTP [{res.Value}].";
-                Console.WriteLine($"{DateTime.Now}> {message}.");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] {message}.");
                 var result = JsonConvert.SerializeObject(message, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
                 return new MethodResponse(Encoding.UTF8.GetBytes(result), 200);
             }
             else
             {
                 string message = $"Error actualizando RTC por NTP [{res.Error}].";
-                Console.WriteLine($"{DateTime.Now}> {message}.");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] {message}.");
                 var result = JsonConvert.SerializeObject(message, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
                 return new MethodResponse(Encoding.UTF8.GetBytes(result), 404);
             }
@@ -625,7 +732,9 @@ namespace GatewayCoreModule
         /// </summary>
         private static Task<MethodResponse> OnToggleUserLedState(MethodRequest methodRequest, object userContext)
         {
-            Console.WriteLine($"{DateTime.Now}> Metodo {methodRequest.Name} recibido.");
+            WriteColor.Set(WriteColor.AnsiColors.Blue);
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Metodo {methodRequest.Name} recibido.");
+            WriteColor.Set(WriteColor.AnsiColors.Reset);
 
             gwHardware.ToggleUserLed();
             LedState st = gwHardware.GetUserLed();
@@ -633,7 +742,7 @@ namespace GatewayCoreModule
             object payload = new { UserLedState = st.ToString() };
             string result = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
 
-            Console.WriteLine($"{DateTime.Now}> {result}");
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] {result}");
 
             return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(result), 200));
         }
@@ -641,23 +750,21 @@ namespace GatewayCoreModule
         /// <summary>
         /// Fuerza la adquisicion y envio de telemetria
         /// </summary>
-        private static Task<MethodResponse> OnPollData(MethodRequest methodRequest, object userContext)
+        private static async Task<MethodResponse> OnPollData(MethodRequest methodRequest, object userContext)
         {
-            Console.WriteLine($"{DateTime.Now}> Metodo {methodRequest.Name} recibido.");
+            WriteColor.Set(WriteColor.AnsiColors.Blue);
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Metodo {methodRequest.Name} recibido.");
+            WriteColor.Set(WriteColor.AnsiColors.Reset);
 
             // Obtiene los datos del gateway
-
             GetGatewayData();
 
             // Envia la telemetria
-
-            _ = SendTelemetryMessage();
+            await SendDataMessage();
 
             // Envia los datos como respuesta del metodo
-
-            return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(gwData.ToJsonString()), 200));
+            return new MethodResponse(Encoding.UTF8.GetBytes(gwData.ToJsonString()), 200);
         }
 
-        
     }
 }
