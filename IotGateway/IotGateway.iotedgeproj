@@ -27,4 +27,9 @@
   </ItemGroup>
   <Import Project="$(MSBuildToolsRoot)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Azure IoT Edge Tools\AzureIoTEdgeProject.Build.targets" />
   <Import Project="$(MSBuildToolsRoot)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Azure IoT Edge Tools\AzureIoTEdgeProject.Build.props" />
+  <ProjectExtensions>
+    <VisualStudio>
+      <UserProperties deployment_1template_1json__JsonSchema="" />
+    </VisualStudio>
+  </ProjectExtensions>
 </Project>

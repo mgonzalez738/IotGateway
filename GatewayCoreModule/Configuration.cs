@@ -13,12 +13,23 @@ namespace GatewayCoreModule
         private string deviceId;
         private DeviceTypes deviceType;
         private string connectionString;
+        private bool delete;
 
+        public DeviceRs485Configuration(string dId, bool del)
+        {
+            this.deviceId = dId;
+            this.deviceType = DeviceTypes.Undefined;
+            this.connectionString = "";
+            this.delete = del;
+        }
+
+        [JsonConstructor]
         public DeviceRs485Configuration(string dId, DeviceTypes dt, string conn)
         {
             this.deviceId = dId;
             this.deviceType = dt;
             this.connectionString = conn;
+            this.delete = false;
         }
 
         public static DeviceRs485Configuration FromJsonString(string st)
@@ -58,6 +69,13 @@ namespace GatewayCoreModule
         {
             get { return this.connectionString; }
             set { this.connectionString = value; }
+        }
+
+        [JsonIgnore]
+        public bool Delete
+        {
+            get { return this.delete; }
+            set { this.delete = value; }
         }
     }
 
@@ -237,6 +255,7 @@ namespace GatewayCoreModule
 
         public event EventHandler PollDataChanged;
         public event EventHandler DetachedTelemetryChanged;
+        public event EventHandler DevicesRs485Changed;
 
         public GatewayProperties()
         {
@@ -244,6 +263,14 @@ namespace GatewayCoreModule
             this.detachedTelemetry = new GatewayDetachedTelemetryConfiguration();
             this.variable = new GatewayVariableConfiguration();
             this.devicesRs485 = new List<DeviceRs485Configuration>();
+        }
+
+        public void DeleteMarkedRS485Devices()
+        {
+            int i;
+            for (i = 0; i < this.devicesRs485.Count; i++)
+                if (this.devicesRs485[i].Delete)
+                    this.devicesRs485.RemoveAt(i);
         }
 
         public string ToJsonString()
@@ -278,6 +305,11 @@ namespace GatewayCoreModule
         protected virtual void OnDetachedTelemetryChanged(EventArgs e)
         {
             DetachedTelemetryChanged?.Invoke(this, e);
+        }
+
+        protected virtual void OnDevicesRs485Changed(EventArgs e)
+        {
+            DevicesRs485Changed?.Invoke(this, e);
         }
 
         public GatewayDataPollConfiguration PollData
@@ -332,7 +364,41 @@ namespace GatewayCoreModule
         public List<DeviceRs485Configuration> DevicesRs485
         {
             get { return this.devicesRs485; }
-            set { this.devicesRs485 = value; }
+            set 
+            {
+                bool changed = false;
+                int i, j;
+
+                for (i = 0; i < value.Count; i++)
+                {
+                    bool matched = false;
+                    for (j = 0; j < this.devicesRs485.Count; j++)
+                    {             
+                        // Modifica el elemento si existe (incluye marcarlo para eliminar)
+                        if (value[i].DeviceId == this.devicesRs485[j].DeviceId)
+                        {
+                            matched = true;
+                            if (value[i].DeviceType != this.devicesRs485[j].DeviceType)
+                                changed = true;
+                            if (value[i].ConnectionString != this.devicesRs485[j].ConnectionString)
+                                changed = true;
+                            if (value[i].Delete != this.devicesRs485[j].Delete)
+                                changed = true;
+                            this.devicesRs485[j] = value[i];
+                            break;
+                        }
+                    }
+                    // Lo agrega si no lo encontro
+                    if (!matched)
+                    {
+                        this.devicesRs485.Add(value[i]);
+                        changed = true;
+                    }
+                }
+
+                if (changed)
+                    OnDevicesRs485Changed(new EventArgs());
+            }
         }
     }
 
@@ -345,9 +411,16 @@ namespace GatewayCoreModule
             JObject lista = new JObject();
             foreach (var device in (List<DeviceRs485Configuration>)value)
             {
-                JObject jObj = (JObject)JToken.FromObject(device);
-                jObj.Remove("DeviceId");
-                lista.Add(device.DeviceId, jObj);
+                if (device.Delete)
+                {
+                    lista.Add(device.DeviceId, null);
+                }
+                else
+                {
+                    JObject jObj = (JObject)JToken.FromObject(device);
+                    jObj.Remove("DeviceId");
+                    lista.Add(device.DeviceId, jObj);
+                }
             }
             lista.WriteTo(writer);
         }
@@ -364,9 +437,14 @@ namespace GatewayCoreModule
                 if (device.Value.Type != JTokenType.Null)
                 {
                     // Finally I'm deserializing the value into an actual Player object
-                    var item = JsonConvert.DeserializeObject<DeviceRs485Configuration>(device.Value.ToString());
+                    DeviceRs485Configuration item = JsonConvert.DeserializeObject<DeviceRs485Configuration>(device.Value.ToString());
                     // Also using the key as the player DeviceId
                     item.DeviceId = device.Key;
+                    response.Add(item);
+                }
+                else
+                {
+                    DeviceRs485Configuration item = new DeviceRs485Configuration(device.Key, true);
                     response.Add(item);
                 }
             }

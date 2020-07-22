@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 
 namespace GatewayGeneral
 {
-    public enum DeviceTypes { Gateway, TowerInclinometer }
+    public enum DeviceTypes { Undefined, Gateway, TowerInclinometer }
     public enum DeviceInterfaces { Rs485 }
 
     public interface IDevicesRs485

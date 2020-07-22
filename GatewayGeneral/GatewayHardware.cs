@@ -18,6 +18,9 @@ namespace Hardware
         LedState GetUserLed();
         void ToggleUserLed();
 
+        //void Rs485Write(byte[] buffer, int count);
+        //int Rs485Read(byte[] buffer, int count);
+
         // User Button
 
         event EventHandler UserButtonPushed;

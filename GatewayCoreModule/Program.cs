@@ -29,6 +29,7 @@ namespace GatewayCoreModule
     using TowerInclinometer;
     using System.Collections.Generic;
     using Iot.Device.BrickPi3.Models;
+    using System.Runtime.CompilerServices;
 
     class Program
     {
@@ -38,6 +39,7 @@ namespace GatewayCoreModule
         private static ScheduleTimer timerSendData;
         private static string storageFolder;
         private static string configFolder;
+        private static string deviceId;
 
         private static GatewayProperties gwProperties;
         private static GatewayData gwData;
@@ -106,18 +108,17 @@ namespace GatewayCoreModule
             await gatewayModuleClient.SetMethodHandlerAsync("PollData", OnPollData, gatewayModuleClient);
             await gatewayModuleClient.SetInputMessageHandlerAsync("input1", PipeMessage, gatewayModuleClient);
 
-            // Inicia el modulo
-
-            await gatewayModuleClient.OpenAsync();
-            Console.WriteLine("");
-            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Inicializando.");           
-
-            // Obtiene el path a las carpetas en el host
+            // Obtiene variables de entorno
 
             storageFolder = Environment.GetEnvironmentVariable("storageFolder");
             configFolder = Environment.GetEnvironmentVariable("configFolder");
-            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Path a carpeta de almacenamiento cargado: {storageFolder}.");
-            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Path a carpeta de configuracion cargado: {configFolder}.");
+            deviceId = Environment.GetEnvironmentVariable("IOTEDGE_DEVICEID");
+
+            // Inicia el modulo
+
+            Console.WriteLine("");
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Inicializando dispositivo " + deviceId + ".");
+            await gatewayModuleClient.OpenAsync();
 
             // Carga la configuracion desde host
             // En caso de error, crea configuracion default y la guarda en Host
@@ -132,9 +133,6 @@ namespace GatewayCoreModule
                 Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error cargando configuracion desde host -> {ex.Message}");
                 gwProperties = new GatewayProperties();
 
-                // Borrar
-                gwProperties.DevicesRs485.Add(new DeviceRs485Configuration("InclinometerRaspi3", DeviceTypes.TowerInclinometer, "HostName=MonitoringHub.azure-devices.net;DeviceId=InclinometerRaspi3;SharedAccessKey=dM/4HP/pm4yO+pdjVh2Gp5jDRgZA+22N2J1zzRl1MeM="));
-
                 Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Configuracion por defecto creada.");
                 try
                 {
@@ -146,24 +144,6 @@ namespace GatewayCoreModule
                     Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error guardando configuración en Host -> {ex2.Message}");
                 }         
             }
-
- /*           // Prueba datos inc
-
-            InclinometerChainData inc = new InclinometerChainData(12);
-            int i;
-            Random rnd = new Random();
-            inc.UtcTime = RoundDateTime.RoundToSeconds(DateTime.Now);
-            for (i = 0; i < inc.Nodes.Count; i++)
-            {
-                inc.Nodes[i].Heigh.Value = 6+i*6;
-                inc.Nodes[i].TiltX.Value = 20 * (rnd.NextDouble() - 0.5);
-                inc.Nodes[i].TiltY.Value = 20 * (rnd.NextDouble() - 0.5);
-                inc.Nodes[i].Rotation.Value = 2 * (rnd.NextDouble() - 0.5);
-            }
-            inc.Wind.Speed.Value = 20 * rnd.NextDouble();
-            inc.Wind.Direction.Value = 20 * rnd.NextDouble();
-            inc.ToJsonFile(configFolder + "IncData.json");
- */
 
             // Crea los datos del gateway y carga la configuracion de variables
 
@@ -261,6 +241,7 @@ namespace GatewayCoreModule
 
             gwProperties.PollDataChanged += GwProperties_PollDataChanged;
             gwProperties.DetachedTelemetryChanged += GwProperties_DetachedTelemetryChanged;
+            gwProperties.DevicesRs485Changed += GwProperties_DevicesRs485Changed;
 
             // CREA DISPOSITIVOS
 
@@ -277,6 +258,7 @@ namespace GatewayCoreModule
                 await dev.Init();
         }
 
+       
         // ENCUESTA Y TELEMETRIA DE DATOS
 
         private static void TimerPollData_Elapsed(object sender, EventArgs e)
@@ -372,6 +354,34 @@ namespace GatewayCoreModule
                 Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Telemetria de datos simultanea con encuesta.");
         }
 
+        private static async void GwProperties_DevicesRs485Changed(object sender, EventArgs e)
+        {
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Propiedad DevicesRs485 modificada.");
+
+            // Desconecta los dispositivos actuales y borra la lista
+            Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Reinicia dispositivos RS485.");
+            foreach (IDevicesRs485 dev in DevicesRs485)
+            {
+                await dev.Stop();
+            }
+
+            // Crea los nuevos dispositivos y los inicializa
+            if (gwProperties.DevicesRs485.Count > 0)
+            {
+                await Task.Delay(10);
+                //Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Creando nuevos dispositivos RS485.");
+                DevicesRs485 = new List<IDevicesRs485>();
+                foreach (DeviceRs485Configuration devConf in gwProperties.DevicesRs485)
+                {
+                    if ((devConf.DeviceType == DeviceTypes.TowerInclinometer) && !devConf.Delete)
+                        DevicesRs485.Add(new DeviceTowerInclinometer(devConf.DeviceId, DeviceInterfaces.Rs485, devConf.ConnectionString));
+                }
+
+                foreach (IDevicesRs485 dev in DevicesRs485)
+                    await dev.Init();
+            }
+        }
+
         // EVENTOS DEL MODULO
 
         private static async Task OnDesiredPropertyChanged(TwinCollection desiredProperties, object userContext)
@@ -385,6 +395,9 @@ namespace GatewayCoreModule
             // Envia las propiedades reportadas
 
             await SendReportedProperties(gwProperties);
+
+            // Elimina propiedades marcadas
+            gwProperties.DeleteMarkedRS485Devices();
 
             WriteColor.Set(WriteColor.AnsiColors.Cyan);
             Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Envio propiedades reportadas.");
@@ -409,9 +422,6 @@ namespace GatewayCoreModule
 
             return Task.FromResult(MessageResponse.Completed);
         }
-
-
-        
 
         public static async Task<Result<DateTime>> GetNetworkTime()
         {
@@ -492,28 +502,42 @@ namespace GatewayCoreModule
                            ((x & 0xff000000) >> 24));
         }
 
-        static async Task UpdateGatewayProperties(TwinCollection desiredProp)
+        static Task UpdateGatewayProperties(TwinCollection desiredProp)
         {
             // Poll Data
             try
             {
-                GatewayDataPollConfiguration gpdc = GatewayDataPollConfiguration.FromJsonString(desiredProp["PollData"].ToString());
-                gwProperties.PollData = gpdc;
+                if (desiredProp["PollData"] == null)
+                {
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No se puede eliminar la propiedad PollData.");
+                }
+                else
+                {
+                    GatewayDataPollConfiguration gpdc = GatewayDataPollConfiguration.FromJsonString(desiredProp["PollData"].ToString());
+                    gwProperties.PollData = gpdc;
+                }
             }
             catch (ArgumentException)
             {
-                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No hay configuracion para Poll Data.");
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No hay configuracion para PollData.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error en configuracion de Poll Data (Ingnorando cambios) -> {ex.Message}");              
+                Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Error en configuracion de PollData (Ingnorando cambios) -> {ex.Message}");              
             }
 
             // Detached Telemetry
             try
             {
-                GatewayDetachedTelemetryConfiguration gdtc = GatewayDetachedTelemetryConfiguration.FromJsonString(desiredProp["DetachedTelemetry"].ToString());
-                gwProperties.DetachedTelemetry = gdtc;
+                if (desiredProp["DetachedTelemetry"] == null)
+                {
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No se puede eliminar la propiedad DetachedTelemetry.");
+                }
+                else
+                {
+                    GatewayDetachedTelemetryConfiguration gdtc = GatewayDetachedTelemetryConfiguration.FromJsonString(desiredProp["DetachedTelemetry"].ToString());
+                    gwProperties.DetachedTelemetry = gdtc;
+                }
             }
             catch (ArgumentException)
             {
@@ -527,12 +551,19 @@ namespace GatewayCoreModule
             // Variable
             try
             {
-                GatewayVariableConfiguration gvc = GatewayVariableConfiguration.FromJsonString(desiredProp["Variable"].ToString());
-                gwProperties.Variable = gvc;
-                gwData.PowerVoltage.Config = gwProperties.Variable.PowerVoltage;
-                gwData.SensedVoltage.Config = gwProperties.Variable.SensedVoltage;
-                gwData.BatteryVoltage.Config = gwProperties.Variable.BatteryVoltage;
-                gwData.Temperature.Config = gwProperties.Variable.Temperature;
+                if (desiredProp["Variable"] == null)
+                {
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No se puede eliminar la propiedad Variable.");
+                }
+                else
+                {
+                    GatewayVariableConfiguration gvc = GatewayVariableConfiguration.FromJsonString(desiredProp["Variable"].ToString());
+                    gwProperties.Variable = gvc;
+                    gwData.PowerVoltage.Config = gwProperties.Variable.PowerVoltage;
+                    gwData.SensedVoltage.Config = gwProperties.Variable.SensedVoltage;
+                    gwData.BatteryVoltage.Config = gwProperties.Variable.BatteryVoltage;
+                    gwData.Temperature.Config = gwProperties.Variable.Temperature;
+                }
             }
             catch (ArgumentException)
             {
@@ -546,40 +577,23 @@ namespace GatewayCoreModule
             // DevicesRs485
             try
             {
-                List<DeviceRs485Configuration> ldev = JsonConvert.DeserializeObject< List<DeviceRs485Configuration> >(desiredProp["DevicesRs485"].ToString(), new DeviceRs485ConfigurationListJsonConverter());
-                if (ldev == null)
-                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No hay configuracion para DevicesRs485.");
+                if (desiredProp["DevicesRs485"] == null)
+                {
+                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No se puede eliminar la propiedad DevicesRs485.");
+                }
                 else
                 {
-                    // Desconecta los dispositivos actuales y borra la lista
-                    Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Eliminando dispositivos actuales RS485.");
-                    foreach (IDevicesRs485 dev in DevicesRs485)
+                    List<DeviceRs485Configuration> ldev = JsonConvert.DeserializeObject<List<DeviceRs485Configuration>>(desiredProp["DevicesRs485"].ToString(), new DeviceRs485ConfigurationListJsonConverter());
+                    if (ldev == null)
+                        Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No hay configuracion de dispositivos para DevicesRs485.");
+                    else if (ldev.Count == 0)
+                        Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] No hay configuracion de dispositivos para DevicesRs485.");
+                    else
                     {
-                        await dev.Stop();
+                        // Guarda la nueva configuracion de dispositivos
+                        gwProperties.DevicesRs485 = ldev;
                     }
-                    DevicesRs485.Clear();
-
-                    // Guarda la nueva configuracion de dispositivos
-                    gwProperties.DevicesRs485 = ldev;
-
-                    // Crea los nuevos dispositivos y los inicializa
-                    if (gwProperties.DevicesRs485.Count > 0)
-                    {
-                        await Task.Delay(10);
-                        Console.WriteLine($"{RoundDateTime.RoundToSeconds(DateTime.Now)}> [Gateway] Creando nuevos dispositivos RS485.");
-                        DevicesRs485 = new List<IDevicesRs485>();
-                        foreach (DeviceRs485Configuration devConf in gwProperties.DevicesRs485)
-                        {
-                            if (devConf.DeviceType == DeviceTypes.TowerInclinometer)
-                                DevicesRs485.Add(new DeviceTowerInclinometer(devConf.DeviceId, DeviceInterfaces.Rs485, devConf.ConnectionString));
-                        }
-
-                        foreach (IDevicesRs485 dev in DevicesRs485)
-                            await dev.Init();
-                    }
-                    
-                }
-                
+                }          
             }
             catch (ArgumentException)
             {
@@ -592,6 +606,8 @@ namespace GatewayCoreModule
 
             // Guarda las propiedades en archivo de configuraion
             gwProperties.ToJsonFile(configFolder + "config.json");
+
+            return Task.FromResult("Ok"); 
         }
 
         static void GetGatewayData()
